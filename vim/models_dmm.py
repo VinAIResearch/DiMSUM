@@ -4,6 +4,7 @@
 # a) using Uvit. Concat directly with time+cond embedding (easy to do, low recommandation)
 # b) using DiT. Use adaIn module (need to investigate more)
 # c) Consider paper recently such as MDT and DiffiT
+# d) rms or layernorm (most gen model use layer norm)
 
 
 # 2. Choose the backbone vision mamba. Consider Umamba, Vim and VMamba (need to read more about these paper)
@@ -469,6 +470,7 @@ class MambaDiffV1(nn.Module):
 # print(out.shape)
 
 def MambaDiffV1_XL_2():
+    # note: most of generative model using layer norm instead of rms norm
     return MambaDiffV1(img_size=32,
                         patch_size=2, 
                         in_chans=4, 
@@ -483,7 +485,7 @@ def MambaDiffV1_XL_2():
                         drop_rate=0.,
                         drop_path_rate=0.0,
                         norm_epsilon=1e-5, 
-                        rms_norm=True, 
+                        rms_norm=False, 
                         initializer_cfg=None,
                         fused_add_norm=True, 
                         residual_in_fp32=True, 
