@@ -35,8 +35,8 @@ export PYTHONFAULTHANDLER=1
 #--rdzv_endpoint 0.0.0.0:8000
 
 CUDA_VISIBLE_DEVICES=3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8000 --nproc_per_node=1 vim/train.py \
-                                                                                            --exp layernorm \
+                                                                                            --exp layernorm_fused_trans_fix \
                                                                                             --model MambaDiffV1_XL_2 \
                                                                                             --datadir ./vim/dataset/celeba-lmdb/ \
                                                                                             --dataset celeba_256 \
-                                                                                            --global-batch-size 128 \
+                                                                                            --global-batch-size 72 \

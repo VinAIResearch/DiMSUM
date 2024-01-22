@@ -4,7 +4,8 @@
 # a) using Uvit. Concat directly with time+cond embedding (easy to do, low recommandation)
 # b) using DiT. Use adaIn module (need to investigate more)
 # c) Consider paper recently such as MDT and DiffiT
-# d) rms or layernorm (most gen model use layer norm)
+# d) rms or layernorm (most gen model use layer norm) ? ==> I think layer norm is better
+# e) should we use fused norm or not ?
 
 
 # 2. Choose the backbone vision mamba. Consider Umamba, Vim and VMamba (need to read more about these paper)
@@ -20,7 +21,7 @@ from typing import Optional
 import math
 
 
-from timm.models.vision_transformer import VisionTransformer, _cfg
+from timm.models.vision_transformer import VisionTransformer, _cfg, Mlp
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_
 from timm.models.layers import DropPath, PatchEmbed
@@ -84,7 +85,7 @@ def unpatchify(x, channels=3):
 
 class Block(nn.Module):
     def __init__(
-        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False,drop_path=0., skip=False
+        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False,drop_path=0., skip=False,
     ):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
@@ -162,6 +163,117 @@ class Block(nn.Module):
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
+    
+    
+class TransBlock(nn.Module):
+    def __init__(
+        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False,drop_path=0., skip=False, mlp_ratio=4,
+    ):
+        """
+        Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
+
+        This Block has a slightly different structure compared to a regular
+        prenorm Transformer block.
+        The standard block is: LN -> MHA/MLP -> Add.
+        [Ref: https://arxiv.org/abs/2002.04745]
+        Here we have: Add -> LN -> Mixer, returning both
+        the hidden_states (output of the mixer) and the residual.
+        This is purely for performance reasons, as we can fuse add and LayerNorm.
+        The residual needs to be provided (except for the very first block).
+        
+        My comment: They use the simple architecture here but we can adapt it
+        """
+        super().__init__()
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.mixer = mixer_cls(dim)
+        self.skip_linear = nn.Linear(2 * dim, dim) if skip else None
+        self.norm = norm_cls(dim)
+        self.norm_linear = norm_cls(dim)
+        # this one have dropout while mamba_simple file does not have
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        if self.fused_add_norm:
+            assert RMSNorm is not None, "RMSNorm import fails"
+            assert isinstance(
+                self.norm, (nn.LayerNorm, RMSNorm)
+            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
+            
+            assert isinstance(
+                self.norm_linear, (nn.LayerNorm, RMSNorm)
+            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
+            
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        approx_gelu = lambda: nn.GELU(approximate="tanh")
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+
+    def forward(
+        self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None, skip=None
+    ):
+        r"""Pass the input through the encoder layer.
+
+        Args:
+            hidden_states: the sequence to the encoder layer (required).
+            residual: hidden_states = Mixer(LN(residual))
+        """
+        if self.skip_linear is not None:
+            hidden_states = self.skip_linear(torch.cat([hidden_states, skip], dim=-1))
+        
+        if not self.fused_add_norm:
+            if residual is None:
+                residual = hidden_states
+            else:
+                residual = residual + self.drop_path(hidden_states)
+            
+            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+            if self.residual_in_fp32:
+                residual = residual.to(torch.float32)
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+            if residual is None:
+                hidden_states, residual = fused_add_norm_fn(
+                    hidden_states,
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )
+            else:
+                hidden_states, residual = fused_add_norm_fn(
+                    self.drop_path(hidden_states),
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )
+                  
+        hidden_states = self.mixer(hidden_states, inference_params=inference_params)
+        
+        if not self.fused_add_norm:
+            residual = residual + self.drop_path(hidden_states)
+            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+            if self.residual_in_fp32:
+                residual = residual.to(torch.float32)
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_linear, RMSNorm) else layer_norm_fn
+            hidden_states, residual = fused_add_norm_fn(
+                self.drop_path(hidden_states),
+                self.norm_linear.weight,
+                self.norm_linear.bias,
+                residual=residual,
+                prenorm=True,
+                residual_in_fp32=self.residual_in_fp32,
+                eps=self.norm_linear.eps,
+            )
+        hidden_states = self.mlp(hidden_states)
+          
+        return hidden_states, residual
+
+    def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
+        return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
 
 def create_block(
@@ -177,6 +289,8 @@ def create_block(
     dtype=None,
     skip=False,
     bimamba_type="none",
+    blk_type="simple",
+    mlp_ratio=4,
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -185,15 +299,27 @@ def create_block(
     norm_cls = partial(
         nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
-    block = Block(
-        d_model,
-        mixer_cls,
-        norm_cls=norm_cls,
-        drop_path=drop_path,
-        fused_add_norm=fused_add_norm,
-        residual_in_fp32=residual_in_fp32,
-        skip=skip
-    )
+    if blk_type == "simple":
+        block = Block(
+            d_model,
+            mixer_cls,
+            norm_cls=norm_cls,
+            drop_path=drop_path,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+            skip=skip
+        )
+    elif blk_type == "trans":
+        block = TransBlock(
+            d_model,
+            mixer_cls,
+            norm_cls=norm_cls,
+            drop_path=drop_path,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+            skip=skip,
+            mlp_ratio=mlp_ratio,
+        )
     block.layer_idx = layer_idx
     return block
 
@@ -316,6 +442,7 @@ class MambaDiffV1(nn.Module):
                         layer_idx=i,
                         bimamba_type=bimamba_type,
                         drop_path=inter_dpr[i],
+                        blk_type="trans",
                         **factory_kwargs,
                 ) for i in range(depth // 2)])
 
@@ -329,6 +456,7 @@ class MambaDiffV1(nn.Module):
                         layer_idx=(depth // 2),
                         bimamba_type=bimamba_type,
                         drop_path=inter_dpr[depth // 2],
+                        blk_type="trans",
                         **factory_kwargs,
                 )
 
@@ -344,6 +472,7 @@ class MambaDiffV1(nn.Module):
                         bimamba_type=bimamba_type,
                         drop_path=inter_dpr[i],
                         skip=skip,
+                        blk_type="trans",
                         **factory_kwargs,
                 ) for i in range(depth // 2 + 1, depth + 1)])
 
@@ -484,7 +613,7 @@ def MambaDiffV1_XL_2():
                         ssm_cfg=None, 
                         drop_rate=0.,
                         drop_path_rate=0.0,
-                        norm_epsilon=1e-5, 
+                        norm_epsilon=1e-6, 
                         rms_norm=False, 
                         initializer_cfg=None,
                         fused_add_norm=True, 
