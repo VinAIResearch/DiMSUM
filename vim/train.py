@@ -29,11 +29,12 @@ import logging
 import os
 from datasets_prep import get_dataset
 
-from models_dmm import mamba_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
 
 from tqdm import tqdm
+
+from create_model import create_model
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -142,7 +143,7 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = mamba_models[args.model]()
+    model = create_model(args) # mamba_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
@@ -265,9 +266,11 @@ if __name__ == "__main__":
     parser.add_argument("--exp", type=str, required=True)
     parser.add_argument("--datadir", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--model", type=str, choices=list(mamba_models.keys()), default="MambaDiffV1_XL_2")
+    parser.add_argument("--model", type=str, default="MambaDiffV1_XL_2")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--num-classes", type=int, default=-1)
+    parser.add_argument("--label-dropout", type=int, default=-1)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
