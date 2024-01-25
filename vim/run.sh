@@ -32,11 +32,12 @@ echo "NODELIST="${SLURM_NODELIST}
 
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
-#--rdzv_endpoint 0.0.0.0:8000
 
-CUDA_VISIBLE_DEVICES=4 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8000 --nproc_per_node=1 vim/train.py \
-                                                                                            --exp dim_celeb256 \
-                                                                                            --model DiM-XL/2 \
-                                                                                            --datadir ./vim/data/celeba-lmdb/ \
-                                                                                            --dataset celeba_256 \
-                                                                                            --global-batch-size 72 \
+CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8000 --nproc_per_node=1 vim/train.py \
+        --exp dim_celeb256 \
+        --model DiM-XL/2 \
+        --datadir ./vim/data/celeba-lmdb/ \
+        --dataset celeba_256 \
+        --num-classes 1 \
+        --global-batch-size 32 \
+        --epochs 800 \
