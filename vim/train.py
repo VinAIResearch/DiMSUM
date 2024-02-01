@@ -28,7 +28,7 @@ import argparse
 import logging
 import os
 from datasets_prep import get_dataset
-
+from models_dim import DiM_models
 from models_dmm import mamba_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
@@ -142,25 +142,35 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = mamba_models[args.model]()
+    model = DiM_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
     model = DDP(model.to(device), device_ids=[rank])
-    diffusion = create_diffusion(timestep_respacing="", learn_sigma=False)  # default: 1000 steps, linear noise schedule
+    diffusion = create_diffusion(timestep_respacing="", learn_sigma=True)  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
-    logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    logger.info(f"Mamba Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
 
-    # Setup data:
-    # transform = transforms.Compose([
-    #     transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
-    # ])
+    # Setup resume
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        init_epoch = checkpoint['epoch']
+        model.load_state_dict(checkpoint['model'])
+        opt.load_state_dict(checkpoint['opt'])
+        ema.load_state_dict(checkpoint['ema'])
+        train_steps = checkpoint['train_step']
+        log_steps = train_steps
+    else:
+        init_epoch = 0
+        # Prepare models for training:
+        update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
+        train_steps = 0
+        log_steps = 0
+        
+    
     dataset = get_dataset(args)
     sampler = DistributedSampler(
         dataset,
@@ -180,19 +190,15 @@ def main(args):
     )
     logger.info(f"Dataset contains {len(dataset):,} images ({args.datadir})")
 
-    # Prepare models for training:
-    update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
+    
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
-
     # Variables for monitoring/logging purposes:
-    train_steps = 0
-    log_steps = 0
     running_loss = 0
     start_time = time()
 
     logger.info(f"Training for {args.epochs} epochs...")
-    for epoch in range(args.epochs):
+    for epoch in range(init_epoch, args.epochs):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
         for x, _ in tqdm(loader):
@@ -236,18 +242,21 @@ def main(args):
                     "model": model.module.state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
-                    "args": args
+                    "args": args,
+                    "epoch": epoch,
+                    "train_step": train_steps,
                 }
-                checkpoint_path = f"{checkpoint_dir}/{epoch:07d}.pt"
+                checkpoint_path = f"{checkpoint_dir}/{epoch:07d}.pth"
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
             dist.barrier()
         if rank == 0:
             z = torch.randn(4, 4, latent_size, latent_size, device=device)
-            samples = diffusion.p_sample_loop(
-                model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
-            )
-            samples = vae.decode(samples / 0.18215).sample
+            with torch.no_grad():
+                samples = diffusion.p_sample_loop(
+                    model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
+                )
+                samples = vae.decode(samples / 0.18215).sample
 
             # Save and display images:
             save_image(samples, f"{checkpoint_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
@@ -263,9 +272,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='cifar10', help='name of dataset')
     parser.add_argument("--exp", type=str, required=True)
+    parser.add_argument("--resume", type=str, default=None, required=False)
     parser.add_argument("--datadir", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--model", type=str, choices=list(mamba_models.keys()), default="MambaDiffV1_XL_2")
+    parser.add_argument("--model", type=str, choices=list(mamba_models.keys())+list(DiM_models.keys()), default="MambaDiffV1_XL_2")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-classes", type=int, default=-1)
     parser.add_argument("--epochs", type=int, default=1400)
@@ -275,5 +285,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
+    parser.add_argument("--lr", type=float, default=1e-4)
     args = parser.parse_args()
     main(args)
