@@ -557,7 +557,7 @@ class MambaDiffV1(nn.Module):
         skips = []
         for blk in self.in_blocks:
             hidden_states, residual = blk(hidden_states, residual, inference_params=inference_params)
-            skips.append(x)
+            skips.append(hidden_states)
 
         hidden_states, residual = self.mid_block(hidden_states, residual, inference_params=inference_params)
 
@@ -598,7 +598,7 @@ class MambaDiffV1(nn.Module):
 # out = model(x, t)
 # print(out.shape)
 
-def MambaDiffV1_XL_2():
+def MambaDiffV1_B_2():
     # note: most of generative model using layer norm instead of rms norm
     return MambaDiffV1(img_size=32,
                         patch_size=2, 
@@ -608,7 +608,7 @@ def MambaDiffV1_XL_2():
                         norm_layer=nn.LayerNorm, 
                         mlp_time_embed=True, 
                         num_classes=-1,
-                        skip=True,
+                        skip=False,
                         conv=True,
                         ssm_cfg=None, 
                         drop_rate=0.,
@@ -622,5 +622,5 @@ def MambaDiffV1_XL_2():
     
     
 mamba_models = {
-    'MambaDiffV1_XL_2': MambaDiffV1_XL_2
+    'MambaDiffV1_B_2': MambaDiffV1_B_2
 }

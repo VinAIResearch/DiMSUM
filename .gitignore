@@ -16,3 +16,6 @@ dataset/
 results/
 stabilityai/
 *.log
+sample/
+real_samples/
+*.tar.gz
