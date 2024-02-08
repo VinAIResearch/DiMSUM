@@ -19,6 +19,7 @@ except ImportError:
 
 from models_dit import FinalLayer, TimestepEmbedder, LabelEmbedder
 from models_dit import get_2d_sincos_pos_embed, modulate
+from switch_mlp import SwitchMLP
 
 
 class DiMBlock(nn.Module):
@@ -101,6 +102,53 @@ class DiMBlock(nn.Module):
         return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
 
+class MoEBlock(nn.Module):
+    def __init__(
+        self, 
+        dim, 
+        mixer_cls, 
+        norm_cls=nn.LayerNorm, 
+        fused_add_norm=False, 
+        residual_in_fp32=False
+    ):
+
+        super().__init__()
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.mixer = mixer_cls(dim)
+        self.norm = norm_cls(dim)
+        if self.fused_add_norm:
+            assert RMSNorm is not None, "RMSNorm import fails"
+            assert isinstance(
+                self.norm, (nn.LayerNorm, RMSNorm)
+            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
+
+    def forward(
+        self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None
+    ):
+        if not self.fused_add_norm:
+            residual = (hidden_states + residual) if residual is not None else hidden_states
+            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+            if self.residual_in_fp32:
+                residual = residual.to(torch.float32)
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+            hidden_states, residual = fused_add_norm_fn(
+                hidden_states,
+                self.norm.weight,
+                self.norm.bias,
+                residual=residual,
+                prenorm=True,
+                residual_in_fp32=self.residual_in_fp32,
+                eps=self.norm.eps,
+            )
+        hidden_states = self.mixer(hidden_states)
+        return hidden_states , residual
+
+    def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
+        return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
+
+
 class DiM(nn.Module):
     def __init__(
         self,
@@ -118,6 +166,11 @@ class DiM(nn.Module):
         fused_add_norm=False,
         bimamba_type="none",
         initializer_cfg=None,
+        num_moe_experts=8,
+        mamba_moe_layers=None,
+        add_bias_linear=False,
+        gated_linear_unit=True,
+        routing_mode='top1',
     ):
         super().__init__()
         self.depth = depth
@@ -147,6 +200,11 @@ class DiM(nn.Module):
                     layer_idx=i,
                     bimamba_type=bimamba_type,
                     drop_path=0.,
+                    num_moe_experts=num_moe_experts,
+                    mamba_moe_layers=mamba_moe_layers,
+                    add_bias_linear=add_bias_linear,
+                    gated_linear_unit=gated_linear_unit,
+                    routing_mode=routing_mode,
                 )
                 for i in range(depth)
             ]
@@ -182,8 +240,9 @@ class DiM(nn.Module):
 
         # Zero-out adaLN modulation layers in DiT blocks:
         for block in self.blocks:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+            if isinstance(block, DiMBlock):
+                nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+                nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
         
         # mamba init
         self.apply(
@@ -232,7 +291,10 @@ class DiM(nn.Module):
         residual = None
         hidden_states = x
         for block in self.blocks:
-            hidden_states, residual = block(hidden_states, residual, c, inference_params=inference_params)  # (N, T, D)
+            if isinstance(block, DiMBlock):
+                hidden_states, residual = block(hidden_states, residual, c, inference_params=inference_params)  # (N, T, D)
+            else:
+                hidden_states, residual = block(hidden_states, residual, inference_params=inference_params)  # (N, T, D)
         x = self.final_layer(hidden_states, c)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
         return x
@@ -307,22 +369,45 @@ def create_block(
     device=None,
     dtype=None,
     bimamba_type="none",
+    add_bias_linear=False,
+    gated_linear_unit=True,
+    routing_mode:str="sinkhorn", # 'sinkhorn', 'top1', 'top2', 'sinkhorn_top2'
+    num_moe_experts:int=8,
+    mamba_moe_layers:list=None,
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
     factory_kwargs = {"device": device, "dtype": dtype}
-    mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
     norm_cls = partial(
         nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
-    block = DiMBlock(
-        d_model,
-        mixer_cls,
-        norm_cls=norm_cls,
-        drop_path=drop_path,
-        fused_add_norm=fused_add_norm,
-        residual_in_fp32=residual_in_fp32,
-    )
+    if layer_idx % 2 == 0:
+        mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
+        block = DiMBlock(
+            d_model,
+            mixer_cls,
+            norm_cls=norm_cls,
+            drop_path=drop_path,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
+    else:
+        mixer_cls = partial(SwitchMLP, 
+            layer_idx=layer_idx, 
+            add_bias_linear=add_bias_linear, 
+            gated_linear_unit=gated_linear_unit, 
+            routing_mode=routing_mode,
+            num_moe_experts=num_moe_experts,
+            mamba_moe_layers=mamba_moe_layers,
+        )
+        block = MoEBlock(
+            d_model,
+            mixer_cls=mixer_cls,
+            norm_cls=norm_cls,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
+
     block.layer_idx = layer_idx
     return block
 
@@ -351,7 +436,20 @@ def DiM_L_2(**kwargs):
         residual_in_fp32=True,
         **kwargs)
 
+def DiM_B_2(**kwargs):
+    return DiM(depth=12, 
+        hidden_size=768, 
+        patch_size=2, 
+        bimamba_type="v2", 
+        initializer_cfg=None,
+        fused_add_norm=False, 
+        rms_norm=False, 
+        ssm_cfg=None, 
+        residual_in_fp32=True,
+        **kwargs)
+
 DiM_models = {
     "DiM-XL/2": DiM_XL_2,
     "DiM-L/2": DiM_L_2,
+    "DiM-B/2": DiM_B_2,
 }

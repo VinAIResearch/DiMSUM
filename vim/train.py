@@ -134,7 +134,9 @@ def main(args):
         model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
         experiment_dir = f"{args.results_dir}/{experiment_index}-{model_string_name}"  # Create an experiment folder
         checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
+        sample_dir = f"{experiment_dir}/samples"
         os.makedirs(checkpoint_dir, exist_ok=True)
+        os.makedirs(sample_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
     else:
@@ -148,9 +150,9 @@ def main(args):
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
     model = DDP(model.to(device), device_ids=[rank])
-    diffusion = create_diffusion(timestep_respacing="", learn_sigma=False)  # default: 1000 steps, linear noise schedule
+    diffusion = create_diffusion(timestep_respacing="", learn_sigma=False, gamma=args.loss_weighting_gamma)  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
-    logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    logger.info(f"DiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
@@ -230,7 +232,18 @@ def main(args):
                 log_steps = 0
                 start_time = time()
 
-            # Save DiT checkpoint:
+        if rank == 0 and epoch % args.plot_every == 0:
+            z = torch.randn(4, 4, latent_size, latent_size, device=device)
+            with torch.no_grad():
+                samples = diffusion.p_sample_loop(
+                    model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
+                )
+                samples = vae.decode(samples / 0.18215).sample
+
+            # Save and display images:
+            save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+
+        # Save DiT checkpoint:
         if epoch % args.ckpt_every == 0 and epoch > 0:
             if rank == 0:
                 checkpoint = {
@@ -243,15 +256,6 @@ def main(args):
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
             dist.barrier()
-        if rank == 0:
-            z = torch.randn(4, 4, latent_size, latent_size, device=device)
-            samples = diffusion.p_sample_loop(
-                model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
-            )
-            samples = vae.decode(samples / 0.18215).sample
-
-            # Save and display images:
-            save_image(samples, f"{checkpoint_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
@@ -278,5 +282,13 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
+    parser.add_argument("--plot-every", type=int, default=5)
+    parser.add_argument("--num-moe-experts", type=int, default=8)
+    parser.add_argument("--mamba-moe-layers", type=str, nargs="*", default=None)
+    parser.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
+    parser.add_argument("--gated-linear-unit", action="store_true")
+    parser.add_argument("--loss_weighting_gamma", type=float, default=None)
+    
+    
     args = parser.parse_args()
     main(args)

@@ -34,10 +34,12 @@ export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
 CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8000 --nproc_per_node=1 vim/train.py \
-        --exp dim_celeb256 \
-        --model DiM-XL/2 \
+        --exp diml2_moe_celeb256 \
+        --model DiM-L/2 \
         --datadir ./vim/data/celeba-lmdb/ \
         --dataset celeba_256 \
         --num-classes 1 \
         --global-batch-size 32 \
         --epochs 800 \
+        --routing-mode top1 \
+        # --gated-linear-unit \
