@@ -67,13 +67,13 @@ def main(args):
 
     # Load model:
     latent_size = args.image_size // 8
-    model = DiM_models[args.model]().to(device)
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt
     state_dict = find_model(ckpt_path)
     model.load_state_dict(state_dict)
     model.eval()  # important!
-    diffusion = create_diffusion(str(args.num_sampling_steps), learn_sigma=False)
+    diffusion = create_diffusion(str(args.num_sampling_steps), learn_sigma=args.learn_sigma)
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     assert args.cfg_scale >= 1.0, "In almost all cases, cfg_scale be >= 1.0"
     using_cfg = args.cfg_scale > 1.0
@@ -87,6 +87,8 @@ def main(args):
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
         print(f"Saving .jpg samples at {sample_folder_dir}")
+        if args.eta is not None:
+            print("Using ddim sampler with eta = {}".format(args.eta))
     dist.barrier()
 
     # Figure out how many samples we need to generate on each GPU and how many iterations we need to run:
@@ -111,9 +113,14 @@ def main(args):
         sample_fn = model.forward
 
         # Sample images:
-        samples = diffusion.p_sample_loop(
-            sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
-        )
+        if args.eta is None:
+            samples = diffusion.p_sample_loop(
+                sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
+            )
+        else:
+            samples = diffusion.ddim_sample_loop(
+                sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device, eta = args.eta
+            )
         if using_cfg:
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
 
@@ -151,5 +158,7 @@ if __name__ == "__main__":
                         help="By default, use TF32 matmuls. This massively accelerates sampling on Ampere GPUs.")
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
+    parser.add_argument("--learn-sigma", action='store_true', default=False)
+    parser.add_argument("--eta",  type=float, default=None)
     args = parser.parse_args()
     main(args)

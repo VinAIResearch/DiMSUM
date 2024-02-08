@@ -32,8 +32,10 @@ from models_dim import DiM_models
 from models_dmm import mamba_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
-
+from download import find_model
 from tqdm import tqdm
+from ptflops import get_model_complexity_info
+
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -142,12 +144,13 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = DiM_models[args.model]()
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma)
+    
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
     model = DDP(model.to(device), device_ids=[rank])
-    diffusion = create_diffusion(timestep_respacing="", learn_sigma=True)  # default: 1000 steps, linear noise schedule
+    diffusion = create_diffusion(timestep_respacing="", learn_sigma=args.learn_sigma)  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"Mamba Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -156,7 +159,7 @@ def main(args):
 
     # Setup resume
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device)
+        checkpoint = find_model(args.resume)
         init_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['model'])
         opt.load_state_dict(checkpoint['opt'])
@@ -246,7 +249,7 @@ def main(args):
                     "epoch": epoch,
                     "train_step": train_steps,
                 }
-                checkpoint_path = f"{checkpoint_dir}/{epoch:07d}.pth"
+                checkpoint_path = f"{checkpoint_dir}/{epoch:07d}.pt"
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
             dist.barrier()
@@ -286,5 +289,6 @@ if __name__ == "__main__":
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--learn-sigma", action='store_true', default=False)
     args = parser.parse_args()
     main(args)
