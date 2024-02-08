@@ -335,13 +335,16 @@ class DiM(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def forward(self, x, t, y=None, **kwargs):
+    def forward(self, x, t = None, y=None, **kwargs):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
+        if t is None:
+            # for compute Gflops
+            t = torch.randint(0, 1000, (x.shape[0],), device=x.device)
         if y is None:
             y = torch.ones(x.size(0), dtype=torch.long, device=x.device) * (self.y_embedder.get_in_channels() - 1)
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
@@ -350,7 +353,7 @@ class DiM(nn.Module):
         c = t + y  # (N, D)
 
         for block in self.blocks:
-            x = block(x, c, inference_params=None)  # (N, T, D)
+            x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
         x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
         return x

@@ -35,11 +35,12 @@ export PYTHONFAULTHANDLER=1
 #--rdzv_endpoint 0.0.0.0:8000
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --nproc_per_node=4 vim/train.py \
-                                                                                            --exp notfused_trans_B_2_learn_sigma \
-                                                                                            --model DiM-B/2 \
+                                                                                            --exp XL_2_pe_feat_learn_sigma \
+                                                                                            --model DiM-XL/2 \
                                                                                             --datadir ./vim/dataset/celeba-lmdb/ \
                                                                                             --dataset celeba_256 \
-                                                                                            --global-batch-size 256 \
+                                                                                            --global-batch-size 64 \
                                                                                             --lr 1e-4 \
-                                                                                            --epochs 1400 \
-                                                                                            # --resume results/notfused_trans_XL-DiM-XL-2/checkpoints/0000350.pt \
+                                                                                            --epochs 500 \
+                                                                                            --learn-sigma \
+                                                                                            # --resume results/notfused_trans_B_2_learn_sigma-DiM-B-2/checkpoints/0000025.pth \
