@@ -10,6 +10,7 @@ from timm.models.vision_transformer import Attention, Mlp, PatchEmbed
 
 from mamba_ssm.modules.mamba_simple import Mamba
 from rope import *
+from pe.my_rotary import get_2d_sincos_rotary_embed, apply_rotary
 
 try:
     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
@@ -238,6 +239,7 @@ class DiM(nn.Module):
         fused_add_norm=False,
         bimamba_type="none",
         initializer_cfg=None,
+        use_rope = False,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -247,6 +249,8 @@ class DiM(nn.Module):
         self.num_classes = num_classes
         self.depth = depth
         self.initializer_cfg = initializer_cfg
+        # using rotary embedding
+        self.use_rope = use_rope
 
         self.x_embedder = PatchEmbed(img_resolution, patch_size, in_channels, hidden_size)
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -254,6 +258,10 @@ class DiM(nn.Module):
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
+        
+        if self.use_rope:
+            # I'm not sure what pt_seq_len for
+            self.emb_sin, self.emb_cos = get_2d_sincos_rotary_embed(hidden_size, int(num_patches**0.5))
 
         self.blocks = nn.ModuleList(
             [
@@ -273,6 +281,7 @@ class DiM(nn.Module):
         )
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
+        
 
     def initialize_weights(self):
         # Initialize transformer layers:
@@ -347,13 +356,26 @@ class DiM(nn.Module):
             t = torch.randint(0, 1000, (x.shape[0],), device=x.device)
         if y is None:
             y = torch.ones(x.size(0), dtype=torch.long, device=x.device) * (self.y_embedder.get_in_channels() - 1)
-        x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        # add rope !
+        if not self.use_rope:
+            x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        else:
+            x = apply_rotary(x, self.emb_sin, self.emb_cos)
         t = self.t_embedder(t)  # (N, D)
         y = self.y_embedder(y, self.training)  # (N, D)
         c = t + y  # (N, D)
 
+        # please comment in/out if want to use ViM Pefeat
         for block in self.blocks:
-            x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
+            if not self.use_rope:
+                # PE + feature (Pefeat)
+                x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
+                # ViM raw
+                # x = block(x, c, inference_params=None)
+            else:
+                # use RoPE
+                x = block(apply_rotary(x, self.emb_sin, self.emb_cos), c, inference_params=None)
+            
         x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
         return x
