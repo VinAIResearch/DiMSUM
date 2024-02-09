@@ -34,13 +34,15 @@ export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 #--rdzv_endpoint 0.0.0.0:8000
 
+
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --nproc_per_node=4 vim/sample_ddp.py \
-                                                                                            --ckpt ./results/notfused_trans_XL_2_learn_sigma-DiM-XL-2/checkpoints/0000350.pt \
+                                                                                            --ckpt ./results/XL_2_pe_feat_learn_sigma-DiM-XL-2/checkpoints/0000425.pt \
                                                                                             --sample-dir ./sample/ \
                                                                                             --per-proc-batch-size 25 \
-                                                                                            --num-fid-samples 10000 \
+                                                                                            --num-fid-samples 50000 \
                                                                                             --num-sampling-steps 250 \
                                                                                             --global-seed 0 \
                                                                                             --model DiM-XL/2 \
                                                                                             --learn-sigma \
-                                                                                            --eta 0.5 \
+                                                                                            --eta 0.6 \
+

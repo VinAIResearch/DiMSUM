@@ -67,7 +67,7 @@ def main(args):
 
     # Load model:
     latent_size = args.image_size // 8
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma).to(device)
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma, use_rope=args.use_rope).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt
     state_dict = find_model(ckpt_path)
@@ -159,6 +159,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
     parser.add_argument("--learn-sigma", action='store_true', default=False)
+    parser.add_argument("--use-rope", action='store_true', default=False)
     parser.add_argument("--eta",  type=float, default=None)
     args = parser.parse_args()
     main(args)

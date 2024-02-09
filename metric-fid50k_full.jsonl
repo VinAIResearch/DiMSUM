@@ -70,3 +70,16 @@
 {"results": {"fid50k_full": 5.910043765149756}, "metric": "fid50k_full", "total_time": 200.37526941299438, "total_time_str": "3m 20s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707325731.2772202}
 //XL/2 sigma 350 10k eta = 0.5
 {"results": {"fid50k_full": 6.92336113639862}, "metric": "fid50k_full", "total_time": 119.08370184898376, "total_time_str": "1m 59s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707330339.0928898}
+//XL/2 sigma 350 10k eta = 0.6 pos feat
+{"results": {"fid50k_full": 10.579053060230635}, "metric": "fid50k_full", "total_time": 168.2610297203064, "total_time_str": "2m 48s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707462859.4943624}
+//XL/2 sigma 375 10k eta = 0.6 pos feat
+{"results": {"fid50k_full": 9.215112269386474}, "metric": "fid50k_full", "total_time": 113.79002785682678, "total_time_str": "1m 54s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707466765.9697862}
+//XL/2 sigma 400 10k eta = 0.6 pos feat
+{"results": {"fid50k_full": 8.535344880447655}, "metric": "fid50k_full", "total_time": 123.54784321784973, "total_time_str": "2m 04s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707471362.0999944}
+//XL/2 sigma 425 10k eta = 0.6 pos feat
+{"results": {"fid50k_full": 8.204991248545644}, "metric": "fid50k_full", "total_time": 122.27100491523743, "total_time_str": "2m 02s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707475877.2346363}
+//XL/2 sigma 450 10k eta = 0.6 pos feat
+{"results": {"fid50k_full": 9.282357231717008}, "metric": "fid50k_full", "total_time": 155.82042837142944, "total_time_str": "2m 36s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707483386.2853296}
+//XL/2 sigma 475 10k eta = 0.6 pos feat
+{"results": {"fid50k_full": 9.06179634600997}, "metric": "fid50k_full", "total_time": 115.34246897697449, "total_time_str": "1m 55s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707487953.7774699}
+//XL/2 sigma 425 50k eta = 0.6 pos feat

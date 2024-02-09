@@ -43,4 +43,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --
                                                                                             --lr 1e-4 \
                                                                                             --epochs 500 \
                                                                                             --learn-sigma \
+                                                                                            # --use_rope \
                                                                                             # --resume results/notfused_trans_B_2_learn_sigma-DiM-B-2/checkpoints/0000025.pth \
