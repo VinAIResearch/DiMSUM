@@ -128,13 +128,13 @@ def main(args):
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
 
     # Setup an experiment folder:
+    experiment_index = args.exp
+    model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
+    experiment_dir = f"{args.results_dir}/{experiment_index}-{model_string_name}"  # Create an experiment folder
+    checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
+    sample_dir = f"{experiment_dir}/samples"
     if rank == 0:
         os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
-        experiment_index = args.exp
-        model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-        experiment_dir = f"{args.results_dir}/{experiment_index}-{model_string_name}"  # Create an experiment folder
-        checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
-        sample_dir = f"{experiment_dir}/samples"
         os.makedirs(checkpoint_dir, exist_ok=True)
         os.makedirs(sample_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
@@ -188,14 +188,42 @@ def main(args):
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
 
+    if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
+        checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
+        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f'cuda:{device}'))
+        init_epoch = checkpoint["epoch"]
+        epoch = init_epoch
+        model.module.load_state_dict(checkpoint["model"])
+        opt.load_state_dict(checkpoint["opt"])
+        ema.load_state_dict(checkpoint["ema"])
+        train_steps = checkpoint["train_steps"]
+
+        logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
+        del checkpoint
+
+    elif args.model_ckpt and os.path.exists(args.model_ckpt):
+        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
+        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
+        init_epoch = epoch
+        model.module.load_state_dict(checkpoint["model"])
+        ema.load_state_dict(checkpoint["ema"])
+        opt.load_state_dict(checkpoint["opt"])
+        train_steps = 0
+
+        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
+        del checkpoint
+    else:
+        init_epoch = 0
+        train_steps = 0
+
+
     # Variables for monitoring/logging purposes:
-    train_steps = 0
     log_steps = 0
     running_loss = 0
     start_time = time()
 
     logger.info(f"Training for {args.epochs} epochs...")
-    for epoch in range(args.epochs):
+    for epoch in range(init_epoch, args.epochs+1):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
         for x, _ in tqdm(loader):
@@ -243,10 +271,26 @@ def main(args):
             # Save and display images:
             save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
 
-        # Save DiT checkpoint:
-        if epoch % args.ckpt_every == 0 and epoch > 0:
-            if rank == 0:
+            del samples
+        
+        if rank == 0:
+            # latest checkpoint
+            if epoch % args.save_content_every == 0:
+                logger.info("Saving content.")
+                content = {
+                    "epoch": epoch + 1,
+                    "train_steps": train_steps,
+                    "args": args,
+                    "model": model.module.state_dict(),
+                    "opt": opt.state_dict(),
+                    "ema": ema.state_dict(),
+                }
+                torch.save(content, os.path.join(checkpoint_dir, "content.pth"))
+
+            # Save DiT checkpoint:
+            if epoch % args.ckpt_every == 0 and epoch > 0:
                 checkpoint = {
+                    "epoch": epoch + 1,
                     "model": model.module.state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
@@ -282,12 +326,15 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
+    parser.add_argument("--save-content-every", type=int, default=5)
     parser.add_argument("--plot-every", type=int, default=5)
     parser.add_argument("--num-moe-experts", type=int, default=8)
     parser.add_argument("--mamba-moe-layers", type=str, nargs="*", default=None)
     parser.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
     parser.add_argument("--gated-linear-unit", action="store_true")
     parser.add_argument("--loss_weighting_gamma", type=float, default=None)
+    parser.add_argument("--model-ckpt", type=str, default='')
+    parser.add_argument("--resume", action="store_true")
     
     
     args = parser.parse_args()
