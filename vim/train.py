@@ -144,7 +144,7 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma, use_rope=args.use_rope)
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type)
     
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
@@ -290,6 +290,6 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-every", type=int, default=25)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--learn-sigma", action='store_true', default=False)
-    parser.add_argument("--use-rope", action='store_true', default=False)
+    parser.add_argument("--pe-type", type=int, default="ape", choices=["ape", "cpe", "rope"])
     args = parser.parse_args()
     main(args)

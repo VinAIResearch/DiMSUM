@@ -46,6 +46,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --
                                                                                             --global-seed 0 \
                                                                                             --model DiM-XL/2 \
                                                                                             --learn-sigma \
-                                                                                            --use-rope \
+                                                                                            --pe-type rope \
                                                                                             --eta 0.6 \
 
