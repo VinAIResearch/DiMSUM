@@ -30,12 +30,14 @@ echo MASTER_PORT=${MASTER_PORT}
 echo WORLD_SIZE=${WORLD_SIZE}
 echo "NODELIST="${SLURM_NODELIST}
 
-export NCCL_DEBUG=INFO
-export PYTHONFAULTHANDLER=1
+# export NCCL_DEBUG=INFO
+# export PYTHONFAULTHANDLER=1
 #--rdzv_endpoint 0.0.0.0:8000
+export OMP_NUM_THREADS=24
+
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --nproc_per_node=4 vim/train.py \
-                                                                                            --exp XL_2_pe_feat_learn_sigma \
+                                                                                            --exp XL_2_rope_first_block \
                                                                                             --model DiM-XL/2 \
                                                                                             --datadir ./vim/dataset/celeba-lmdb/ \
                                                                                             --dataset celeba_256 \
@@ -43,5 +45,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --
                                                                                             --lr 1e-4 \
                                                                                             --epochs 500 \
                                                                                             --learn-sigma \
-                                                                                            # --use_rope \
+                                                                                            --use-rope \
                                                                                             # --resume results/notfused_trans_B_2_learn_sigma-DiM-B-2/checkpoints/0000025.pth \

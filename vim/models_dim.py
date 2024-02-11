@@ -11,7 +11,7 @@ from timm.models.vision_transformer import Attention, Mlp, PatchEmbed
 from mamba_ssm.modules.mamba_simple import Mamba
 from rope import *
 from pe.my_rotary import get_2d_sincos_rotary_embed, apply_rotary
-
+from pe.cpe import PosCNN
 try:
     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
 except ImportError:
@@ -126,10 +126,10 @@ class LabelEmbedder(nn.Module):
 
     def __init__(self, num_classes, hidden_size, dropout_prob):
         super().__init__()
-        use_cfg_embedding = dropout_prob > 0
-        self.in_channels = num_classes + use_cfg_embedding
+        use_cfg_embedding = dropout_prob > 0 # 1
+        self.in_channels = num_classes + use_cfg_embedding # 1001
         self.embedding_table = nn.Embedding(self.in_channels, hidden_size)
-        self.num_classes = num_classes
+        self.num_classes = num_classes # 1000
         self.dropout_prob = dropout_prob
 
     def token_drop(self, labels, force_drop_ids=None):
@@ -140,7 +140,7 @@ class LabelEmbedder(nn.Module):
             drop_ids = torch.rand(labels.shape[0], device=labels.device) < self.dropout_prob
         else:
             drop_ids = force_drop_ids == 1
-        labels = torch.where(drop_ids, self.num_classes, labels)
+        labels = torch.where(drop_ids, self.num_classes, labels) # 1000 or labels
         return labels
 
     def forward(self, labels, train, force_drop_ids=None):
@@ -151,7 +151,7 @@ class LabelEmbedder(nn.Module):
         return embeddings
 
     def get_in_channels(self):
-        return self.in_channels
+        return self.in_channels # 1001
 
 
 
@@ -239,7 +239,7 @@ class DiM(nn.Module):
         fused_add_norm=False,
         bimamba_type="none",
         initializer_cfg=None,
-        use_rope = False,
+        pe_type = "ape",
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -250,7 +250,7 @@ class DiM(nn.Module):
         self.depth = depth
         self.initializer_cfg = initializer_cfg
         # using rotary embedding
-        self.use_rope = use_rope
+        self.pe_type = pe_type
 
         self.x_embedder = PatchEmbed(img_resolution, patch_size, in_channels, hidden_size)
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -259,9 +259,14 @@ class DiM(nn.Module):
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
         
-        if self.use_rope:
+        if self.pe_type == "rope":
             # I'm not sure what pt_seq_len for
             self.emb_sin, self.emb_cos = get_2d_sincos_rotary_embed(hidden_size, int(num_patches**0.5))
+            self.emb_sin = torch.from_numpy(self.emb_sin).to(dtype=torch.float32)
+            self.emb_cos = torch.from_numpy(self.emb_cos).to(dtype=torch.float32)
+        elif self.pe_type == "cpe":
+            self.pos_cnn = PosCNN(hidden_size, hidden_size)
+
 
         self.blocks = nn.ModuleList(
             [
@@ -355,32 +360,43 @@ class DiM(nn.Module):
             # for compute Gflops
             t = torch.randint(0, 1000, (x.shape[0],), device=x.device)
         if y is None:
-            y = torch.ones(x.size(0), dtype=torch.long, device=x.device) * (self.y_embedder.get_in_channels() - 1)
+            y = torch.ones(x.size(0), dtype=torch.long, device=x.device) * (self.y_embedder.get_in_channels() - 1) # 1000
         # add rope !
-        if not self.use_rope:
+        if self.pe_type == "ape":
             x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        elif self.pe_type == "rope":
+            self.emb_cos = self.emb_cos.to(x.device)
+            self.emb_sin = self.emb_sin.to(x.device)
+            x = apply_rotary(self.x_embedder(x), self.emb_sin, self.emb_cos)
+        elif self.pe_type == "cpe":
+            h = w = int(self.x_embedder.num_patches**0.5)
+            x = self.pos_cnn(x, H = h, W = w)
         else:
-            x = apply_rotary(x, self.emb_sin, self.emb_cos)
+            raise("Unsupport PE")
+            
         t = self.t_embedder(t)  # (N, D)
         y = self.y_embedder(y, self.training)  # (N, D)
         c = t + y  # (N, D)
 
         # please comment in/out if want to use ViM Pefeat
-        for block in self.blocks:
-            if not self.use_rope:
+        for idx, block in enumerate(self.blocks):
+            if self.pe_type == "ape":
                 # PE + feature (Pefeat)
                 x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
                 # ViM raw
                 # x = block(x, c, inference_params=None)
-            else:
+            elif self.pe_type == "rope":
                 # use RoPE
-                x = block(apply_rotary(x, self.emb_sin, self.emb_cos), c, inference_params=None)
-            
+                # x = block(apply_rotary(x, self.emb_sin, self.emb_cos), c, inference_params=None)
+                x = block(x, c, inference_params=None)
+            elif self.pe_type == "cpe":
+                pass
+                
         x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
         return x
 
-    def forward_with_cfg(self, t, x, y=None, cfg_scale=1.0, **kwargs):
+    def forward_with_cfg(self, x, t, y=None, cfg_scale=1.0, **kwargs):
         """
         Forward pass of DiT, but also batches the unconditional forward pass for classifier-free guidance.
         """
