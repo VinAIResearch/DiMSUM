@@ -67,7 +67,7 @@ def main(args):
 
     # Load model:
     latent_size = args.image_size // 8
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma, use_rope=args.use_rope).to(device)
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt
     state_dict = find_model(ckpt_path)

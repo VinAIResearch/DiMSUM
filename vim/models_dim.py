@@ -390,7 +390,7 @@ class DiM(nn.Module):
                 # x = block(apply_rotary(x, self.emb_sin, self.emb_cos), c, inference_params=None)
                 x = block(x, c, inference_params=None)
             elif self.pe_type == "cpe":
-                pass
+                x = block(x, c, inference_params=None)
                 
         x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
