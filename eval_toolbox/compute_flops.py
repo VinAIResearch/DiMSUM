@@ -1,6 +1,9 @@
 import argparse
 import torch
 from fvcore.nn import FlopCountAnalysis, flop_count_table
+import sys
+sys.path.append("./vim")
+
 # from torchtoolbox.tools import summary
 from thop.profile import profile
 from models_dim import DiM_models
@@ -18,7 +21,7 @@ if __name__ == '__main__':
 
     torch.manual_seed(42)
     device = 'cuda'
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma)
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma).to(device)
     model.eval()
 
     pytorch_total_params = sum(p.numel() for p in model.parameters())
@@ -44,7 +47,7 @@ if __name__ == '__main__':
     
     print("%s | %s" % ("Params(M)", "FLOPs(G)"))
     print("---|---")
-    total_ops, total_params = profile(model, (t,x), verbose=False)
+    total_ops, total_params = profile(model, (x, t), verbose=False)
     print(
         "%.2f | %.2f" % (total_params / (1000 ** 2), total_ops / (1000 ** 3))
     )

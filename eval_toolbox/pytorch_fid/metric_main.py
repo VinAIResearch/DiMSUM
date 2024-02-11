@@ -94,7 +94,7 @@ def kid50k_full(opts):
 @register_metric
 def pr50k3_full(opts):
     opts.dataset_kwargs.update(max_size=None, xflip=False)
-    precision, recall = precision_recall.compute_pr(opts, max_real=200000, num_gen=50000, nhood_size=3, row_batch_size=10000, col_batch_size=10000)
+    precision, recall = precision_recall.compute_pr(opts, max_real=200000, num_gen=10000, nhood_size=3, row_batch_size=10000, col_batch_size=10000)
     return dict(pr50k3_full_precision=precision, pr50k3_full_recall=recall)
 
 @register_metric
