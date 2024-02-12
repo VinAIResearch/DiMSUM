@@ -15,7 +15,8 @@ def create_diffusion(
     predict_xstart=False,
     learn_sigma=True,
     rescale_learned_sigmas=False,
-    diffusion_steps=1000
+    diffusion_steps=1000,
+    gamma=None,
 ):
     betas = gd.get_named_beta_schedule(noise_schedule, diffusion_steps)
     if use_kl:
@@ -24,6 +25,10 @@ def create_diffusion(
         loss_type = gd.LossType.RESCALED_MSE
     else:
         loss_type = gd.LossType.MSE
+    if gamma is not None:
+        loss_weighting_type = gd.LossWeightingType.SoftMinSNR
+    else:
+        loss_weighting_type = gd.LossWeightingType.ONE
     if timestep_respacing is None or timestep_respacing == "":
         timestep_respacing = [diffusion_steps]
     return SpacedDiffusion(
@@ -41,6 +46,8 @@ def create_diffusion(
             if not learn_sigma
             else gd.ModelVarType.LEARNED_RANGE
         ),
-        loss_type=loss_type
+        loss_type=loss_type,
+        loss_weighting_type=loss_weighting_type,
+        gamma=gamma,
         # rescale_timesteps=rescale_timesteps,
     )

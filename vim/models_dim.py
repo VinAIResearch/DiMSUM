@@ -171,6 +171,7 @@ class DiM(nn.Module):
         add_bias_linear=False,
         gated_linear_unit=True,
         routing_mode='top1',
+        is_moe=False,
     ):
         super().__init__()
         self.depth = depth
@@ -205,6 +206,7 @@ class DiM(nn.Module):
                     add_bias_linear=add_bias_linear,
                     gated_linear_unit=gated_linear_unit,
                     routing_mode=routing_mode,
+                    is_moe=is_moe,
                 )
                 for i in range(depth)
             ]
@@ -374,6 +376,7 @@ def create_block(
     routing_mode:str="sinkhorn", # 'sinkhorn', 'top1', 'top2', 'sinkhorn_top2'
     num_moe_experts:int=8,
     mamba_moe_layers:list=None,
+    is_moe:bool=False,
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -381,7 +384,7 @@ def create_block(
     norm_cls = partial(
         nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
-    if layer_idx % 2 == 0:
+    if layer_idx % 2 == 0 or not is_moe:
         mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
         block = DiMBlock(
             d_model,

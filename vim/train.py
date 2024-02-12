@@ -142,20 +142,49 @@ def main(args):
     else:
         logger = create_logger(None)
 
+
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
     model = create_model(args) # mamba_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    requires_grad(ema, False)
     model = DDP(model.to(device), device_ids=[rank])
-    diffusion = create_diffusion(timestep_respacing="", learn_sigma=False, gamma=args.loss_weighting_gamma)  # default: 1000 steps, linear noise schedule
+    diffusion = create_diffusion(timestep_respacing="", learn_sigma=args.learn_sigma, gamma=args.loss_weighting_gamma)  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"DiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+
+    if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
+        checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
+        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f'cuda:{device}'))
+        init_epoch = checkpoint["epoch"]
+        epoch = init_epoch
+        model.module.load_state_dict(checkpoint["model"])
+        opt.load_state_dict(checkpoint["opt"])
+        ema.load_state_dict(checkpoint["ema"])
+        train_steps = checkpoint["train_steps"]
+
+        logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
+        del checkpoint
+
+    elif args.model_ckpt and os.path.exists(args.model_ckpt):
+        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
+        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
+        init_epoch = epoch
+        model.module.load_state_dict(checkpoint["model"])
+        ema.load_state_dict(checkpoint["ema"])
+        opt.load_state_dict(checkpoint["opt"])
+        train_steps = 0
+
+        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
+        del checkpoint
+    else:
+        init_epoch = 0
+        train_steps = 0
+    requires_grad(ema, False)
 
     # Setup data:
     # transform = transforms.Compose([
@@ -188,52 +217,40 @@ def main(args):
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
 
-    if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
-        checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
-        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f'cuda:{device}'))
-        init_epoch = checkpoint["epoch"]
-        epoch = init_epoch
-        model.module.load_state_dict(checkpoint["model"])
-        opt.load_state_dict(checkpoint["opt"])
-        ema.load_state_dict(checkpoint["ema"])
-        train_steps = checkpoint["train_steps"]
-
-        logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
-        del checkpoint
-
-    elif args.model_ckpt and os.path.exists(args.model_ckpt):
-        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
-        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
-        init_epoch = epoch
-        model.module.load_state_dict(checkpoint["model"])
-        ema.load_state_dict(checkpoint["ema"])
-        opt.load_state_dict(checkpoint["opt"])
-        train_steps = 0
-
-        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
-        del checkpoint
-    else:
-        init_epoch = 0
-        train_steps = 0
-
-
     # Variables for monitoring/logging purposes:
     log_steps = 0
     running_loss = 0
     start_time = time()
+    use_label = True if "imagenet" in args.dataset else False
+
+    # Create sampling noise & label
+    sample_bs = 4
+    zs = torch.randn(sample_bs, 4, latent_size, latent_size, device=device)
+    ys = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
+    use_cfg = args.cfg_scale > 1.0
+    # Setup classifier-free guidance:
+    if use_cfg:
+        zs = torch.cat([zs, zs], 0)
+        y_null = torch.tensor([args.num_classes] * sample_bs, device=device)
+        ys = torch.cat([ys, y_null], 0)
+        sample_model_kwargs = dict(y=ys, cfg_scale=args.cfg_scale)
+        model_fn = ema.forward_with_cfg
+    else:
+        sample_model_kwargs = dict(y=ys)
+        model_fn = ema.forward
 
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(init_epoch, args.epochs+1):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
-        for x, _ in tqdm(loader):
+        for x, y in tqdm(loader):
             x = x.to(device)
-            # y = y.to(device)
+            y = None if not use_label else y.to(device)
             with torch.no_grad():
                 # Map input images to latent space + normalize latents:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
-            model_kwargs = dict(y=None)
+            model_kwargs = dict(y=y)
             loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
             loss = loss_dict["loss"].mean()
             opt.zero_grad()
@@ -260,19 +277,6 @@ def main(args):
                 log_steps = 0
                 start_time = time()
 
-        if rank == 0 and epoch % args.plot_every == 0:
-            z = torch.randn(4, 4, latent_size, latent_size, device=device)
-            with torch.no_grad():
-                samples = diffusion.p_sample_loop(
-                    model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
-                )
-                samples = vae.decode(samples / 0.18215).sample
-
-            # Save and display images:
-            save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
-
-            del samples
-        
         if rank == 0:
             # latest checkpoint
             if epoch % args.save_content_every == 0:
@@ -286,6 +290,7 @@ def main(args):
                     "ema": ema.state_dict(),
                 }
                 torch.save(content, os.path.join(checkpoint_dir, "content.pth"))
+            dist.barrier()
 
             # Save DiT checkpoint:
             if epoch % args.ckpt_every == 0 and epoch > 0:
@@ -301,6 +306,21 @@ def main(args):
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
             dist.barrier()
 
+
+        if rank == 0 and epoch % args.plot_every == 0:
+            with torch.no_grad():
+                samples = diffusion.p_sample_loop(
+                    model_fn, zs.shape, zs, clip_denoised=False, model_kwargs=sample_model_kwargs, progress=True, device=device
+                )
+                dist.barrier()
+                if use_cfg: #remove null samples
+                    samples, _ = samples.chunk(2, dim=0)
+                samples = vae.decode(samples / 0.18215).sample
+
+            # Save and display images:
+            save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+            del samples
+        
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
     logger.info("Done!")
@@ -318,6 +338,7 @@ if __name__ == "__main__":
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--num-classes", type=int, default=-1)
+    parser.add_argument("--cfg-scale", type=float, default=1.)
     parser.add_argument("--label-dropout", type=int, default=-1)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
@@ -328,11 +349,13 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-every", type=int, default=25)
     parser.add_argument("--save-content-every", type=int, default=5)
     parser.add_argument("--plot-every", type=int, default=5)
+    parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--num-moe-experts", type=int, default=8)
     parser.add_argument("--mamba-moe-layers", type=str, nargs="*", default=None)
+    parser.add_argument("--is-moe", action="store_true")
     parser.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
     parser.add_argument("--gated-linear-unit", action="store_true")
-    parser.add_argument("--loss_weighting_gamma", type=float, default=None)
+    parser.add_argument("--loss-weighting-gamma", type=float, default=None)
     parser.add_argument("--model-ckpt", type=str, default='')
     parser.add_argument("--resume", action="store_true")
     

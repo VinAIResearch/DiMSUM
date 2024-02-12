@@ -251,7 +251,7 @@ class DiT(nn.Module):
 
         return ckpt_forward
 
-    def forward(self, t, x, y=None, **kwargs):
+    def forward(self, x, t, y=None, **kwargs):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)

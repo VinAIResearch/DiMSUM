@@ -1,10 +1,10 @@
 #!/bin/sh
-#SBATCH --job-name=one # create a short name for your job
-#SBATCH --output=/lustre/scratch/client/vinai/users/haopt12/swiftbrush-code/slurms/slurm_%A.out # create a output file
-#SBATCH --error=/lustre/scratch/client/vinai/users/haopt12/swiftbrush-code/slurms/slurm_%A.err # create a error file
+#SBATCH --job-name=soft # create a short name for your job
+#SBATCH --output=/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurms/slurm_%A.out # create a output file
+#SBATCH --error=/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurms/slurm_%A.err # create a error file
 #SBATCH --partition=research # choose partition
 #SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=16 # 80
+#SBATCH --cpus-per-task=8 # 80
 #SBATCH --mem-per-gpu=32GB
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -17,7 +17,7 @@
 set -x
 set -e
 
-export MASTER_PORT=10112
+export MASTER_PORT=10119
 export WORLD_SIZE=1
 
 export SLURM_JOB_NODELIST=$(scontrol show hostnames $SLURM_JOB_NODELIST | tr '\n' ' ')
@@ -33,13 +33,39 @@ echo "NODELIST="${SLURM_NODELIST}
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
-CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8000 --nproc_per_node=1 vim/train.py \
-        --exp diml2_moe_celeb256 \
-        --model DiM-L/2 \
+CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train.py \
+        --exp dimxl2_celeb256_softsnr4 \
+        --model DiM-XL/2 \
         --datadir ./vim/data/celeba-lmdb/ \
         --dataset celeba_256 \
         --num-classes 1 \
         --global-batch-size 32 \
         --epochs 800 \
-        --routing-mode top1 \
-        # --gated-linear-unit \
+        --loss-weighting-gamma 4. \
+        --learn-sigma \
+#         # --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
+
+# CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train.py \
+#         --exp diml2_moe_celeb256 \
+#         --model DiM-L/2 \
+#         --datadir ./vim/data/celeba-lmdb/ \
+#         --dataset celeba_256 \
+#         --num-classes 1 \
+#         --global-batch-size 32 \
+#         --epochs 800 \
+#         --routing-mode top1 \
+#         --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
+#         --is-moe \
+#         # --gated-linear-unit \
+
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=2 vim/train.py \
+#         --exp diml2_moe_ffhq256 \
+#         --model DiM-L/2 \
+#         --datadir vim/data/ffhq-lmdb/ \
+#         --dataset ffhq_256 \
+#         --num-classes 1 \
+#         --global-batch-size 32 \
+#         --epochs 800 \
+#         --routing-mode top1 \
+#         --is-moe \
+#         # --gated-linear-unit \
