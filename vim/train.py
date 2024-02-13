@@ -144,7 +144,7 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type)
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type, block_type=args.block_type)
     
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
@@ -201,7 +201,7 @@ def main(args):
     start_time = time()
 
     logger.info(f"Training for {args.epochs} epochs...")
-    for epoch in range(init_epoch, args.epochs):
+    for epoch in range(init_epoch, args.epochs+1):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
         for x, _ in tqdm(loader):
@@ -290,6 +290,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-every", type=int, default=25)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--learn-sigma", action='store_true', default=False)
-    parser.add_argument("--pe-type", type=int, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     args = parser.parse_args()
     main(args)
