@@ -60,14 +60,9 @@ def main(args):
     torch.cuda.set_device(device)
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
 
-    # if args.ckpt is None:
-    #     assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
-    #     assert args.image_size in [256, 512]
-    #     assert args.num_classes == 1000
-
     # Load model:
     latent_size = args.image_size // 8
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type).to(device)
+    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type, block_type=args.block_type).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt
     state_dict = find_model(ckpt_path)
@@ -159,7 +154,8 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
     parser.add_argument("--learn-sigma", action='store_true', default=False)
-    parser.add_argument("--use-rope", action='store_true', default=False)
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--eta",  type=float, default=None)
     args = parser.parse_args()
     main(args)

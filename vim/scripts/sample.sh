@@ -34,11 +34,13 @@ echo "NODELIST="${SLURM_NODELIST}
 # export PYTHONFAULTHANDLER=1
 #--rdzv_endpoint 0.0.0.0:8000
 # ./results/XL_2_pe_feat_learn_sigma-DiM-XL-2/checkpoints/0000425.pt \
+# /lustre/scratch/client/scratch/research/group/anhgroup/trungdt21/code/mamba/quandiff/results/XL_2_pe_feat_learn_sigma-DiM-XL-2/checkpoints/0000400.pt \
+# /lustre/scratch/client/scratch/research/group/anhgroup/trungdt21/code/mamba/quandiff/results/XL_2_cpe_block0-DiM-XL-2/checkpoints/0000350.pt \
 export OMP_NUM_THREADS=24
 
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --nproc_per_node=4 vim/sample_ddp.py \
-                                                                                            --ckpt /lustre/scratch/client/scratch/research/group/anhgroup/trungdt21/code/mamba/quandiff/results/XL_2_pe_feat_learn_sigma-DiM-XL-2/checkpoints/0000400.pt \
+                                                                                            --ckpt /lustre/scratch/client/scratch/research/group/anhgroup/trungdt21/code/mamba/quandiff/results/XL_2_cpe_block0-DiM-XL-2/checkpoints/0000475.pt \
                                                                                             --sample-dir ./sample/ \
                                                                                             --per-proc-batch-size 25 \
                                                                                             --num-fid-samples 10000 \
@@ -46,6 +48,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --
                                                                                             --global-seed 0 \
                                                                                             --model DiM-XL/2 \
                                                                                             --learn-sigma \
-                                                                                            --pe-type rope \
+                                                                                            --pe-type cpe \
                                                                                             --eta 0.6 \
 

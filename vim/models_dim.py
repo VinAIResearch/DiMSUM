@@ -220,6 +220,49 @@ class DiMBlock(nn.Module):
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
+    
+class DiMBlockRaw(nn.Module):
+    def __init__(
+        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False, drop_path=0.,
+    ):
+        """
+        Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
+
+        This Block has a slightly different structure compared to a regular
+        prenorm Transformer block.
+        The standard block is: LN -> MHA/MLP -> Add.
+        [Ref: https://arxiv.org/abs/2002.04745]
+        Here we have: Add -> LN -> Mixer, returning both
+        the hidden_states (output of the mixer) and the residual.
+        This is purely for performance reasons, as we can fuse add and LayerNorm.
+        The residual needs to be provided (except for the very first block).
+        """
+        super().__init__()
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.mixer = mixer_cls(dim)
+        self.norm = norm_cls(dim)
+        self.norm_2 = norm_cls(dim)
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
+
+    def forward(
+        self, hidden_states: Tensor, c: Optional[Tensor] = None, inference_params=None
+    ):
+        r"""Pass the input through the encoder layer.
+
+        Args:
+            hidden_states: the sequence to the encoder layer (required).
+            residual: hidden_states = Mixer(LN(residual))
+        """
+        shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
+        hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(self.norm(hidden_states), shift_ssm, scale_ssm), inference_params=inference_params)
+        
+        return hidden_states
+
+    def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
+        return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
 
 class DiM(nn.Module):
@@ -240,6 +283,7 @@ class DiM(nn.Module):
         bimamba_type="none",
         initializer_cfg=None,
         pe_type = "ape",
+        block_type = "linear",
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -251,6 +295,8 @@ class DiM(nn.Module):
         self.initializer_cfg = initializer_cfg
         # using rotary embedding
         self.pe_type = pe_type
+        # block type
+        self.block_type = block_type
 
         self.x_embedder = PatchEmbed(img_resolution, patch_size, in_channels, hidden_size)
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -280,6 +326,7 @@ class DiM(nn.Module):
                     layer_idx=i,
                     bimamba_type=bimamba_type,
                     drop_path=0.,
+                    block_type=block_type
                 )
                 for i in range(depth)
             ]
@@ -369,6 +416,7 @@ class DiM(nn.Module):
             self.emb_sin = self.emb_sin.to(x.device)
             x = apply_rotary(self.x_embedder(x), self.emb_sin, self.emb_cos)
         elif self.pe_type == "cpe":
+            x = self.x_embedder(x)
             h = w = int(self.x_embedder.num_patches**0.5)
             x = self.pos_cnn(x, H = h, W = w)
         else:
@@ -382,7 +430,10 @@ class DiM(nn.Module):
         for idx, block in enumerate(self.blocks):
             if self.pe_type == "ape":
                 # PE + feature (Pefeat)
-                x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
+                if idx <= 5:
+                    x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
+                else:
+                    x = block(x, c, inference_params=None)
                 # ViM raw
                 # x = block(x, c, inference_params=None)
             elif self.pe_type == "rope":
@@ -390,6 +441,9 @@ class DiM(nn.Module):
                 # x = block(apply_rotary(x, self.emb_sin, self.emb_cos), c, inference_params=None)
                 x = block(x, c, inference_params=None)
             elif self.pe_type == "cpe":
+                # if idx == 1:
+                #     h = w = int(self.x_embedder.num_patches**0.5)
+                #     x = self.pos_cnn(x, H = h, W = w)
                 x = block(x, c, inference_params=None)
                 
         x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
@@ -466,6 +520,7 @@ def create_block(
     device=None,
     dtype=None,
     bimamba_type="none",
+    block_type="linear",
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -474,14 +529,24 @@ def create_block(
     norm_cls = partial(
         nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
-    block = DiMBlock(
-        d_model,
-        mixer_cls,
-        norm_cls=norm_cls,
-        drop_path=drop_path,
-        fused_add_norm=fused_add_norm,
-        residual_in_fp32=residual_in_fp32,
-    )
+    if block_type == "linear":
+        block = DiMBlock(
+            d_model,
+            mixer_cls,
+            norm_cls=norm_cls,
+            drop_path=drop_path,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
+    elif block_type == "raw":
+        block = DiMBlockRaw(
+            d_model,
+            mixer_cls,
+            norm_cls=norm_cls,
+            drop_path=drop_path,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
     block.layer_idx = layer_idx
     return block
 

@@ -88,5 +88,19 @@
 {"results": {"fid50k_full": 9.291079478593762}, "metric": "fid50k_full", "total_time": 118.1234142780304, "total_time_str": "1m 58s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707590512.4298532}
 //XL/2 sigma 325 10k eta = 0.6 rope
 {"results": {"fid50k_full": 9.293034973781472}, "metric": "fid50k_full", "total_time": 120.47926664352417, "total_time_str": "2m 00s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707615216.7466807}
-
+//XL/2 sigma 400 10k eta = 0.6 rope
 {"results": {"fid50k_full": 9.356449403497086}, "metric": "fid50k_full", "total_time": 119.3730525970459, "total_time_str": "1m 59s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707621583.7317524}
+//XL/2 sigma 350 10k eta = 0.6 rope one block
+{"results": {"fid50k_full": 7.546469710630371}, "metric": "fid50k_full", "total_time": 118.13449764251709, "total_time_str": "1m 58s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707752171.3052428}
+//XL/2 sigma 400 10k eta = 0.6 rope one block
+{"results": {"fid50k_full": 7.346160390380228}, "metric": "fid50k_full", "total_time": 122.20937418937683, "total_time_str": "2m 02s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707756465.646074}
+//XL/2 sigma 450 10k eta = 0.6 rope one block
+{"results": {"fid50k_full": 7.322095821519883}, "metric": "fid50k_full", "total_time": 120.33903741836548, "total_time_str": "2m 00s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707760768.0375853}
+//XL/2 sigma 450 50k eta = 0.6 rope one block
+{"results": {"fid50k_full": 6.3831210633105915}, "metric": "fid50k_full", "total_time": 269.5463435649872, "total_time_str": "4m 30s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707786441.08134}
+//XL/2 sigma 350 10k eta = 0.6 cpe block 1
+{"results": {"fid50k_full": 7.454491030018483}, "metric": "fid50k_full", "total_time": 121.19849276542664, "total_time_str": "2m 01s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707806930.4592638}
+//XL/2 sigma 400 10k eta = 0.6 cpe block 1
+{"results": {"fid50k_full": 7.393173526737732}, "metric": "fid50k_full", "total_time": 166.59915828704834, "total_time_str": "2m 47s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707815870.6694574}
+//XL/2 sigma 450 10k eta = 0.6 cpe block 1
+{"results": {"fid50k_full": 7.458996921874888}, "metric": "fid50k_full", "total_time": 166.12760591506958, "total_time_str": "2m 46s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707821485.263815}
