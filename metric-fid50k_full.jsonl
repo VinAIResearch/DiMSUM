@@ -104,3 +104,7 @@
 {"results": {"fid50k_full": 7.393173526737732}, "metric": "fid50k_full", "total_time": 166.59915828704834, "total_time_str": "2m 47s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707815870.6694574}
 //XL/2 sigma 450 10k eta = 0.6 cpe block 1
 {"results": {"fid50k_full": 7.458996921874888}, "metric": "fid50k_full", "total_time": 166.12760591506958, "total_time_str": "2m 46s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1707821485.263815}
+//XL/2 sigma 350 10k eta = 0.6 ape 
+
+{"results": {"fid50k_full": 5.787869536666061}, "metric": "fid50k_full", "total_time": 191.83067750930786, "total_time_str": "3m 12s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1708429854.0525813}
+{"results": {"fid50k_full": 8.09807023495704}, "metric": "fid50k_full", "total_time": 187.41890358924866, "total_time_str": "3m 07s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1708572540.9954162}

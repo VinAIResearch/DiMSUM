@@ -40,14 +40,15 @@ export OMP_NUM_THREADS=24
 
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:8005 --nproc_per_node=4 vim/sample_ddp.py \
-                                                                                            --ckpt /lustre/scratch/client/scratch/research/group/anhgroup/trungdt21/code/mamba/quandiff/results/XL_2_cpe_block0-DiM-XL-2/checkpoints/0000475.pt \
+                                                                                            --ckpt ./results/L_2_ape_linear_block_cpe-1-DiM-L-2/checkpoints/0000300.pt \
                                                                                             --sample-dir ./sample/ \
-                                                                                            --per-proc-batch-size 25 \
-                                                                                            --num-fid-samples 10000 \
+                                                                                            --per-proc-batch-size 50 \
+                                                                                            --num-fid-samples 100000 \
                                                                                             --num-sampling-steps 250 \
                                                                                             --global-seed 0 \
-                                                                                            --model DiM-XL/2 \
+                                                                                            --model DiM-L/2 \
                                                                                             --learn-sigma \
                                                                                             --pe-type cpe \
+                                                                                            --block-type linear \
                                                                                             --eta 0.6 \
 

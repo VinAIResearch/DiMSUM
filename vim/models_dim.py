@@ -11,7 +11,7 @@ from timm.models.vision_transformer import Attention, Mlp, PatchEmbed
 from mamba_ssm.modules.mamba_simple import Mamba
 from rope import *
 from pe.my_rotary import get_2d_sincos_rotary_embed, apply_rotary
-from pe.cpe import PosCNN
+from pe.cpe import PosCNN, AdaInPosCNN
 try:
     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
 except ImportError:
@@ -211,6 +211,7 @@ class DiMBlock(nn.Module):
         Args:
             hidden_states: the sequence to the encoder layer (required).
             residual: hidden_states = Mixer(LN(residual))
+            c: (N, D)
         """
         shift_ssm, scale_ssm, gate_ssm, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
         hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(self.norm(hidden_states), shift_ssm, scale_ssm), inference_params=inference_params)
@@ -242,9 +243,7 @@ class DiMBlockRaw(nn.Module):
         self.fused_add_norm = fused_add_norm
         self.mixer = mixer_cls(dim)
         self.norm = norm_cls(dim)
-        self.norm_2 = norm_cls(dim)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
 
     def forward(
@@ -258,7 +257,6 @@ class DiMBlockRaw(nn.Module):
         """
         shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
         hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(self.norm(hidden_states), shift_ssm, scale_ssm), inference_params=inference_params)
-        
         return hidden_states
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
@@ -311,7 +309,7 @@ class DiM(nn.Module):
             self.emb_sin = torch.from_numpy(self.emb_sin).to(dtype=torch.float32)
             self.emb_cos = torch.from_numpy(self.emb_cos).to(dtype=torch.float32)
         elif self.pe_type == "cpe":
-            self.pos_cnn = PosCNN(hidden_size, hidden_size)
+            self.pos_cnn = AdaInPosCNN(hidden_size, hidden_size)
 
 
         self.blocks = nn.ModuleList(
@@ -408,6 +406,11 @@ class DiM(nn.Module):
             t = torch.randint(0, 1000, (x.shape[0],), device=x.device)
         if y is None:
             y = torch.ones(x.size(0), dtype=torch.long, device=x.device) * (self.y_embedder.get_in_channels() - 1) # 1000
+        
+        t = self.t_embedder(t)  # (N, D)
+        y = self.y_embedder(y, self.training)  # (N, D)
+        c = t + y  # (N, D)
+        
         # add rope !
         if self.pe_type == "ape":
             x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
@@ -418,24 +421,20 @@ class DiM(nn.Module):
         elif self.pe_type == "cpe":
             x = self.x_embedder(x)
             h = w = int(self.x_embedder.num_patches**0.5)
-            x = self.pos_cnn(x, H = h, W = w)
+            x = self.pos_cnn(x, c, H = h, W = w)
         else:
             raise("Unsupport PE")
-            
-        t = self.t_embedder(t)  # (N, D)
-        y = self.y_embedder(y, self.training)  # (N, D)
-        c = t + y  # (N, D)
 
         # please comment in/out if want to use ViM Pefeat
         for idx, block in enumerate(self.blocks):
             if self.pe_type == "ape":
                 # PE + feature (Pefeat)
-                if idx <= 5:
-                    x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
-                else:
-                    x = block(x, c, inference_params=None)
+                # if idx <= 5:
+                #     x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
+                # else:
+                #     x = block(x, c, inference_params=None)
                 # ViM raw
-                # x = block(x, c, inference_params=None)
+                x = block(x, c, inference_params=None)
             elif self.pe_type == "rope":
                 # use RoPE
                 # x = block(apply_rotary(x, self.emb_sin, self.emb_cos), c, inference_params=None)

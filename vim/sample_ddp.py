@@ -76,9 +76,10 @@ def main(args):
     # Create folder to save samples:
     model_string_name = args.model.replace("/", "-")
     ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
-    folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
+    folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-" \
                   f"cfg-{args.cfg_scale}-seed-{args.global_seed}"
-    sample_folder_dir = f"{args.sample_dir}/{folder_name}"
+    exp_name = args.ckpt.split("/")[-3]
+    sample_folder_dir = f"{args.sample_dir}/{exp_name}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
         print(f"Saving .jpg samples at {sample_folder_dir}")
@@ -129,10 +130,10 @@ def main(args):
         total += global_batch_size
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
-    dist.barrier()
-    if rank == 0:
-        create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
-        print("Done.")
+    # dist.barrier()
+    # if rank == 0:
+    #     create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
+    #     print("Done.")
     dist.barrier()
     dist.destroy_process_group()
 

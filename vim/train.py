@@ -156,6 +156,7 @@ def main(args):
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-5, verbose=True)
 
     # Setup resume
     if args.resume:
@@ -237,8 +238,10 @@ def main(args):
                 running_loss = 0
                 log_steps = 0
                 start_time = time()
+        if not args.no_lr_decay:
+            scheduler.step()
 
-            # Save DiT checkpoint:
+        # Save DiT checkpoint:
         if epoch % args.ckpt_every == 0 and epoch > 0:
             if rank == 0:
                 checkpoint = {
@@ -292,5 +295,7 @@ if __name__ == "__main__":
     parser.add_argument("--learn-sigma", action='store_true', default=False)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
+    parser.add_argument("--no-lr-decay", action='store_true', default=False)
+    
     args = parser.parse_args()
     main(args)
