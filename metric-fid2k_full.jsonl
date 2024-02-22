@@ -9,6 +9,7 @@
 // 400
 {"results": {"fid50k_full": 11.415406153501042}, "metric": "fid2k_full", "total_time": 105.99212765693665, "total_time_str": "1m 46s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1708415634.745505}
 
+// CPE -1
 // 425
 {"results": {"fid50k_full": 13.846206215527301}, "metric": "fid2k_full", "total_time": 109.71908903121948, "total_time_str": "1m 50s", "num_gpus": 1, "snapshot_pkl": null, "timestamp": 1708544400.8694143}
 // 325
