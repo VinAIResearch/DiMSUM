@@ -104,6 +104,15 @@ def fid2k_full(opts):
     return dict(fid50k_full=fid)
 
 @register_metric
+<<<<<<< HEAD
+=======
+def fid2k_full(opts):
+    opts.dataset_kwargs.update(max_size=None, xflip=False)
+    fid = frechet_inception_distance.compute_fid(opts, max_real=None, num_gen=2000)
+    return dict(fid50k_full=fid)
+
+@register_metric
+>>>>>>> origin/trungdt21
 def kid50k_full(opts):
     opts.dataset_kwargs.update(max_size=None, xflip=False)
     kid = kernel_inception_distance.compute_kid(opts, max_real=1000000, num_gen=50000, num_subsets=100, max_subset_size=1000)
@@ -116,7 +125,11 @@ def pr50k3_full(opts):
     return dict(pr50k3_full_precision=precision, pr50k3_full_recall=recall)
 
 @register_metric
+<<<<<<< HEAD
 def pr50k3_full(opts):
+=======
+def pr10k3_full(opts):
+>>>>>>> origin/trungdt21
     opts.dataset_kwargs.update(max_size=None, xflip=False)
     precision, recall = precision_recall.compute_pr(opts, max_real=200000, num_gen=10000, nhood_size=3, row_batch_size=10000, col_batch_size=10000)
     return dict(pr50k3_full_precision=precision, pr50k3_full_recall=recall)

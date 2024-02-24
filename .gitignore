@@ -22,3 +22,8 @@ eval_toolbox/dnnlib/__pycache__/
 eval_toolbox/pytorch_fid/__pycache__/
 eval_toolbox/torch_utils/__pycache__/
 eval_toolbox/training/__pycache__/
+
+sample/
+real_samples/
+*.tar.gz
+vim/stabilityai/

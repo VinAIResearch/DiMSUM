@@ -272,4 +272,8 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
         features = detector(images, **detector_kwargs)
         stats.append_torch(features, num_gpus=opts.num_gpus, rank=opts.rank)
         progress.update(stats.num_items)
+<<<<<<< HEAD
     return stats
+=======
+    return stats
+>>>>>>> origin/trungdt21
