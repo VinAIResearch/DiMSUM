@@ -7,6 +7,11 @@
 """
 A minimal training script for DiT using PyTorch DDP.
 """
+import math
+import sys
+from pathlib import Path
+import gc
+
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -35,6 +40,11 @@ from diffusers.models import AutoencoderKL
 from download import find_model
 from tqdm import tqdm
 from ptflops import get_model_complexity_info
+
+eval_import_path = (Path(__file__).parent.parent / "eval_toolbox").resolve().as_posix()
+sys.path.append(eval_import_path)
+import dnnlib
+from pytorch_fid import metric_main, metric_utils
 
 
 #################################################################################
@@ -266,6 +276,108 @@ def main(args):
 
             # Save and display images:
             save_image(samples, f"{checkpoint_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+        if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
+            ref_dir = Path(args.eval_refdir)
+            if ref_dir.exists():
+                n = args.eval_bs
+                using_cfg = args.eval_cfg_scale > 1.0
+                global_batch_size = n * dist.get_world_size()
+                total_samples = int(
+                    math.ceil(args.eval_nsamples / global_batch_size)
+                    * global_batch_size
+                )
+                samples_needed_this_gpu = int(total_samples // dist.get_world_size())
+                iterations = int(samples_needed_this_gpu // n)
+                pbar = range(iterations)
+                pbar = tqdm(pbar) if rank == 0 else pbar
+                total = 0
+                p = Path(checkpoint_dir) / f"fid_{epoch:04d}"
+                p.mkdir(exist_ok=True, parents=True)
+                model.eval()
+                for _ in pbar:
+                    # Sample inputs:
+                    z = torch.randn(
+                        n, 4, latent_size, latent_size, device=device
+                    )
+                    # Setup classifier-free guidance:
+                    model_kwargs = dict(y=None)
+                    sample_fn = model.forward
+
+                    # Sample images:
+                    if args.eval_eta is None:
+                        samples = diffusion.p_sample_loop(
+                            sample_fn,
+                            z.shape,
+                            z,
+                            clip_denoised=False,
+                            model_kwargs=model_kwargs,
+                            progress=False,
+                            device=device,
+                        )
+                    else:
+                        samples = diffusion.ddim_sample_loop(
+                            sample_fn,
+                            z.shape,
+                            z,
+                            clip_denoised=False,
+                            model_kwargs=model_kwargs,
+                            progress=False,
+                            device=device,
+                            eta=args.eval_eta,
+                        )
+                    if using_cfg:
+                        samples, _ = samples.chunk(
+                            2, dim=0
+                        )  # Remove null class samples
+
+                    samples = vae.decode(samples / 0.18215).sample
+                    samples = (
+                        torch.clamp(127.5 * samples + 128.0, 0, 255)
+                        .permute(0, 2, 3, 1)
+                        .to("cpu", dtype=torch.uint8)
+                        .numpy()
+                    )
+
+                    # Save samples to disk as individual .png files
+                    for i, sample in enumerate(samples):
+                        index = i * dist.get_world_size() + rank + total
+                        if index >= args.eval_nsamples:
+                            break
+                        pp = p / f"{index:06d}.jpg"
+                        Image.fromarray(sample).save(pp.as_posix())
+                    total += global_batch_size
+
+                model.train()
+                eval_args = dnnlib.EasyDict()
+                eval_args.dataset_kwargs = dnnlib.EasyDict(
+                    class_name="training.dataset.ImageFolderDataset",
+                    path=ref_dir.as_posix(),
+                    xflip=True,
+                )
+                eval_args.gen_dataset_kwargs = dnnlib.EasyDict(
+                    class_name="training.dataset.ImageFolderDataset",
+                    path=p.resolve().as_posix(),
+                    xflip=True,
+                )
+                progress = metric_utils.ProgressMonitor(verbose=True)
+                if rank == 0:
+                    print("Calculating FID...")
+                result_dict = metric_main.calc_metric(metric="fid2k_full", 
+                                                    dataset_kwargs=eval_args.dataset_kwargs,
+                                                    num_gpus=dist.get_world_size(),
+                                                    rank=rank, 
+                                                    device=device,
+                                                    progress=progress,
+                                                    gen_dataset_kwargs=eval_args.gen_dataset_kwargs,
+                                                    cache=True)
+                if rank == 0:
+                    metric_main.report_metric(result_dict, run_dir=p.as_posix(), snapshot_pkl=p.as_posix())
+                del result_dict, samples
+                gc.collect()
+                torch.cuda.empty_cache()
+            else:
+                print(f"Reference directory {ref_dir} does not exist, skip eval")
+            dist.barrier()
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
@@ -296,6 +408,12 @@ if __name__ == "__main__":
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
+    parser.add_argument("--eval-every", type=int, default=100)
+    parser.add_argument("--eval-refdir", type=str, default=None)
+    parser.add_argument("--eval-nsamples", type=int, default=1000)
+    parser.add_argument("--eval-bs", type=int, default=4)
+    parser.add_argument("--eval-eta", type=float, default=0.6)
+    parser.add_argument("--eval-cfg-scale", type=float, default=1.0)
     
     args = parser.parse_args()
     main(args)
