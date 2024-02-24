@@ -16,3 +16,9 @@ dataset/
 results/
 stabilityai/
 *.log
+
+eval_toolbox/__pycache__/
+eval_toolbox/dnnlib/__pycache__/
+eval_toolbox/pytorch_fid/__pycache__/
+eval_toolbox/torch_utils/__pycache__/
+eval_toolbox/training/__pycache__/

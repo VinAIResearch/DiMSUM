@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name=ff # create a short name for your job
+#SBATCH --job-name=uni # create a short name for your job
 #SBATCH --output=/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurms/slurm_%A.out # create a output file
 #SBATCH --error=/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurms/slurm_%A.err # create a error file
 #SBATCH --partition=research # choose partition
@@ -17,7 +17,7 @@
 set -x
 set -e
 
-export MASTER_PORT=10119
+export MASTER_PORT=10121
 export WORLD_SIZE=1
 
 export SLURM_JOB_NODELIST=$(scontrol show hostnames $SLURM_JOB_NODELIST | tr '\n' ' ')
@@ -34,7 +34,7 @@ export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
 CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train_sit.py \
-        --exp idimxl2_celeb256_gvp \
+        --exp idimxl2_celeb256_gvp_difflog \
         --model DiM-XL/2 \
         --datadir ./vim/data/celeba-lmdb/ \
         --dataset celeba_256 \
@@ -42,9 +42,23 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT 
         --global-batch-size 32 \
         --epochs 800 \
         --path-type GVP \
-        # --loss-weighting-gamma 4. \
+        --diffusion-form log \
+        # --bimamba-type none \
         # --learn-sigma \
 #         # --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
+
+# CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train_sit.py \
+#         --exp idimxl2_church_GVP \
+#         --model DiM-XL/2 \
+#         --datadir ./vim/data/lsun/ \
+#         --dataset lsun_church \
+#         --num-classes 1 \
+#         --global-batch-size 32 \
+#         --epochs 800 \
+#         --path-type GVP \
+#         # --bimamba-type none \
+#         # --learn-sigma \
+# #         # --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
 
 # CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train.py \
 #         --exp diml2_moe_celeb256 \

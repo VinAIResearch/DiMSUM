@@ -7,6 +7,7 @@
 """
 A minimal training script for DiT using PyTorch DDP.
 """
+import datetime
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -118,7 +119,7 @@ def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
     # Setup DDP:
-    dist.init_process_group("nccl")
+    dist.init_process_group("nccl", timeout=datetime.timedelta(seconds=5400))
     assert args.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
@@ -280,7 +281,6 @@ def main(args):
         if rank == 0:
             # latest checkpoint
             if epoch % args.save_content_every == 0:
-                logger.info("Saving content.")
                 content = {
                     "epoch": epoch + 1,
                     "train_steps": train_steps,
@@ -290,7 +290,7 @@ def main(args):
                     "ema": ema.state_dict(),
                 }
                 torch.save(content, os.path.join(checkpoint_dir, "content.pth"))
-            dist.barrier()
+                logger.info("Saved content")
 
             # Save DiT checkpoint:
             if epoch % args.ckpt_every == 0 and epoch > 0:
@@ -339,7 +339,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--num-classes", type=int, default=-1)
     parser.add_argument("--cfg-scale", type=float, default=1.)
-    parser.add_argument("--label-dropout", type=int, default=-1)
+    parser.add_argument("--label-dropout", type=float, default=-1)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
@@ -350,6 +350,8 @@ if __name__ == "__main__":
     parser.add_argument("--save-content-every", type=int, default=5)
     parser.add_argument("--plot-every", type=int, default=5)
     parser.add_argument("--learn-sigma", action="store_true")
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+
     parser.add_argument("--num-moe-experts", type=int, default=8)
     parser.add_argument("--mamba-moe-layers", type=str, nargs="*", default=None)
     parser.add_argument("--is-moe", action="store_true")

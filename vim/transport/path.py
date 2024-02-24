@@ -17,8 +17,9 @@ def expand_t_like_x(t, x):
 
 class ICPlan:
     """Linear Coupling Plan"""
-    def __init__(self, sigma=0.0):
+    def __init__(self, sigma=0.0, diffusion_form="none"):
         self.sigma = sigma
+        self.diffusion_form = diffusion_form
 
     def compute_alpha_t(self, t):
         """Compute the data coefficient along the path"""
@@ -52,12 +53,41 @@ class ICPlan:
         """
         t = expand_t_like_x(t, x)
         choices = {
-            "constant": norm,
-            "SBDM": norm * self.compute_drift(x, t)[1],
+            "none": th.zeros((1,), device=t.device),
+            "constant": th.full((1,), norm, device=t.device),
+            "SBDM": norm * 2. * self.compute_drift(x, t)[1],
             "sigma": norm * self.compute_sigma_t(t)[0],
             "linear": norm * (1 - t),
             "decreasing": 0.25 * (norm * th.cos(np.pi * t) + 1) ** 2,
-            "inccreasing-decreasing": norm * th.sin(np.pi * t) ** 2,
+            "increasing-decreasing": norm * th.sin(np.pi * t) ** 2,
+            "log": norm * th.log(t - t**2 + 1),
+        }
+
+        try:
+            diffusion = choices[form]
+        except KeyError:
+            raise NotImplementedError(f"Diffusion form {form} not implemented")
+        
+        return diffusion
+
+    def compute_d_diffusion(self, x, t, form="constant", norm=1.0):
+        """Compute the derivative of diffusion term of the SDE
+        Args:
+          x: [batch_dim, ...], data point
+          t: [batch_dim,], time vector
+          form: str, form of the diffusion term
+          norm: float, norm of the diffusion term
+        """
+        t = expand_t_like_x(t, x)
+        choices = {
+            "none": th.zeros((1,), device=t.device),
+            "constant": th.zeros((1,), device=t.device),
+            # "SBDM": norm * 2. * self.compute_drift(x, t)[1],
+            # "sigma": norm * self.compute_sigma_t(t)[0],
+            "linear": th.full((1,), -norm),
+            "decreasing": -0.5 * np.pi * norm * th.sin(np.pi * t) * (norm * th.cos(np.pi * t) + 1), # 0.25 * (norm * th.cos(np.pi * t) + 1) ** 2,
+            "increasing-decreasing": 2 * norm * np.pi * th.sin(np.pi * t) * th.cos(np.pi * t), # norm * th.sin(np.pi * t) ** 2,
+            "log": norm * (1 - 2*t)/(t - t**2 + 1),
         }
 
         try:
@@ -131,15 +161,17 @@ class ICPlan:
         return d_alpha_t * x1 + d_sigma_t * x0
     
     def plan(self, t, x0, x1):
-        xt = self.compute_xt(t, x0, x1)
-        ut = self.compute_ut(t, x0, x1, xt)
+        perturbation = th.randn_like(x1)
+        xt = self.compute_xt(t, x0, x1) + self.compute_diffusion(x1, t, form=self.diffusion_form) * perturbation
+        ut = self.compute_ut(t, x0, x1, xt) + self.compute_d_diffusion(x1, t, form=self.diffusion_form) * perturbation
         return t, xt, ut
     
 
 class VPCPlan(ICPlan):
     """class for VP path flow matching"""
 
-    def __init__(self, sigma_min=0.1, sigma_max=20.0):
+    def __init__(self, sigma_min=0.1, sigma_max=20.0, **kwargs):
+        super().__init__(**kwargs)
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.log_mean_coeff = lambda t: -0.25 * ((1 - t) ** 2) * (self.sigma_max - self.sigma_min) - 0.5 * (1 - t) * self.sigma_min 
@@ -172,8 +204,8 @@ class VPCPlan(ICPlan):
     
 
 class GVPCPlan(ICPlan):
-    def __init__(self, sigma=0.0):
-        super().__init__(sigma)
+    def __init__(self, sigma=0.0, **kwargs):
+        super().__init__(sigma, **kwargs)
     
     def compute_alpha_t(self, t):
         """Compute coefficient of x1"""

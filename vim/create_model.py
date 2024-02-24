@@ -13,6 +13,7 @@ def create_model(config):
             num_moe_experts=config.num_moe_experts,
             is_moe=config.is_moe,
             learn_sigma=config.learn_sigma,
+            bimamba_type=config.bimamba_type,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](

@@ -19,7 +19,7 @@ class sde:
     ):
         assert t0 < t1, "SDE sampler has to be in forward time"
 
-        self.num_timesteps = num_steps
+        self.num_timesteps = num_steps 
         self.t = th.linspace(t0, t1, num_steps)
         self.dt = self.t[1] - self.t[0]
         self.drift = drift

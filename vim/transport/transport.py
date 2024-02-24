@@ -46,6 +46,7 @@ class Transport:
         loss_type,
         train_eps,
         sample_eps,
+        path_args={},
     ):
         path_options = {
             PathType.LINEAR: path.ICPlan,
@@ -55,7 +56,7 @@ class Transport:
 
         self.loss_type = loss_type
         self.model_type = model_type
-        self.path_sampler = path_options[path_type]()
+        self.path_sampler = path_options[path_type](**path_args)
         self.train_eps = train_eps
         self.sample_eps = sample_eps
 
@@ -295,10 +296,13 @@ class Sampler:
         - last_step_size: size of the last step; default to match the stride of 250 steps over [0,1]
         - num_steps: total integration step of SDE
         """
-
+        num_steps = num_steps if sampling_method == "Euler" else num_steps // 2
         if last_step is None:
             last_step_size = 0.0
-
+        else:
+            if last_step_size == -1:
+                last_step_size = 1./num_steps
+        
         sde_drift, sde_diffusion = self.__get_sde_diffusion_and_drift(
             diffusion_form=diffusion_form,
             diffusion_norm=diffusion_norm,

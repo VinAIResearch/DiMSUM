@@ -149,13 +149,14 @@ def main(args):
     model = create_model(args) # mamba_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    model = DDP(model.to(device), device_ids=[rank])
+    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=True)
     transport = create_transport(
         args.path_type,
         args.prediction,
         args.loss_weight,
         args.train_eps,
-        args.sample_eps
+        args.sample_eps,
+        path_args={"diffusion_form": args.diffusion_form},
     )  # default: velocity; 
     transport_sampler = Sampler(transport)
     vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
@@ -257,7 +258,6 @@ def main(args):
                 # Map input images to latent space + normalize latents:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             model_kwargs = dict(y=y)
-            # loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
             loss_dict = transport.training_losses(model, x, model_kwargs)
             loss = loss_dict["loss"].mean()
             opt.zero_grad()
@@ -333,6 +333,12 @@ def main(args):
     cleanup()
 
 
+def none_or_str(value):
+    if value == 'None':
+        return None
+    return value
+
+
 if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
     parser = argparse.ArgumentParser()
@@ -343,9 +349,9 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="MambaDiffV1_XL_2")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-in-channels", type=int, default=4)
-    parser.add_argument("--num-classes", type=int, default=-1)
+    parser.add_argument("--num-classes", type=int, default=0)
     parser.add_argument("--cfg-scale", type=float, default=1.)
-    parser.add_argument("--label-dropout", type=int, default=-1)
+    parser.add_argument("--label-dropout", type=float, default=-1)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
@@ -358,10 +364,12 @@ if __name__ == "__main__":
     parser.add_argument("--model-ckpt", type=str, default='')
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--learn-sigma", action="store_true")
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)
-    group.add_argument("--mamba-moe-layers", type=str, nargs="*", default=None)
+    group.add_argument("--mamba-moe-layers", type=none_or_str, nargs="*", default=None)
     group.add_argument("--is-moe", action="store_true")
     group.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
     group.add_argument("--gated-linear-unit", action="store_true")
@@ -369,9 +377,12 @@ if __name__ == "__main__":
     group = parser.add_argument_group("Transport arguments")
     group.add_argument("--path-type", type=str, default="Linear", choices=["Linear", "GVP", "VP"])
     group.add_argument("--prediction", type=str, default="velocity", choices=["velocity", "score", "noise"])
-    group.add_argument("--loss-weight", type=str, default=None, choices=[None, "velocity", "likelihood"])
+    group.add_argument("--loss-weight", type=none_or_str, default=None, choices=[None, "velocity", "likelihood"])
     group.add_argument("--sample-eps", type=float)
     group.add_argument("--train-eps", type=float)
+    group.add_argument("--diffusion-form", type=str, default="none", \
+                            choices=["none", "constant", "SBDM", "sigma", "linear", "decreasing", "increasing-decreasing", "log"],\
+                            help="form of diffusion coefficient in the SDE")
 
     args = parser.parse_args()
     main(args)
