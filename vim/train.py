@@ -40,14 +40,13 @@ from diffusers.models import AutoencoderKL
 from download import find_model
 from tqdm import tqdm
 from ptflops import get_model_complexity_info
+from create_model import create_model
 
 eval_import_path = (Path(__file__).parent.parent / "eval_toolbox").resolve().as_posix()
 sys.path.append(eval_import_path)
 import dnnlib
 from pytorch_fid import metric_main, metric_utils
 
-
-from create_model import create_model
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -222,6 +221,7 @@ def main(args):
     
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
+
     # Variables for monitoring/logging purposes:
     log_steps = 0
     running_loss = 0
@@ -314,16 +314,19 @@ def main(args):
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
             dist.barrier()
 
-            # sample
-            z = torch.randn(4, 4, latent_size, latent_size, device=device)
+        if rank == 0 and epoch % args.plot_every == 0:
             with torch.no_grad():
                 samples = diffusion.p_sample_loop(
-                    model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
+                    model_fn, zs.shape, zs, clip_denoised=False, model_kwargs=sample_model_kwargs, progress=True, device=device
                 )
+                dist.barrier()
+                if use_cfg: #remove null samples
+                    samples, _ = samples.chunk(2, dim=0)
                 samples = vae.decode(samples / 0.18215).sample
 
             # Save and display images:
-            save_image(samples, f"{checkpoint_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+            save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+            del samples
 
         if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
             ref_dir = Path(args.eval_refdir)
@@ -348,14 +351,22 @@ def main(args):
                     z = torch.randn(
                         n, 4, latent_size, latent_size, device=device
                     )
+                    y = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
                     # Setup classifier-free guidance:
-                    model_kwargs = dict(y=None)
-                    sample_fn = model.forward
+                    if use_cfg:
+                        z = torch.cat([z, z], 0)
+                        y_null = torch.tensor([args.num_classes] * n, device=device)
+                        y = torch.cat([y, y_null], 0)
+                        sample_model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+                        model_eval_fn = model.forward_with_cfg
+                    else:
+                        sample_model_kwargs = dict(y=y)
+                        model_eval_fn = model.forward
 
                     # Sample images:
                     if args.eval_eta is None:
                         samples = diffusion.p_sample_loop(
-                            sample_fn,
+                            model_eval_fn,
                             z.shape,
                             z,
                             clip_denoised=False,
@@ -365,7 +376,7 @@ def main(args):
                         )
                     else:
                         samples = diffusion.ddim_sample_loop(
-                            sample_fn,
+                            model_eval_fn,
                             z.shape,
                             z,
                             clip_denoised=False,
@@ -428,19 +439,6 @@ def main(args):
                 print(f"Reference directory {ref_dir} does not exist, skip eval")
             dist.barrier()
 
-        if rank == 0 and epoch % args.plot_every == 0:
-            with torch.no_grad():
-                samples = diffusion.p_sample_loop(
-                    model_fn, zs.shape, zs, clip_denoised=False, model_kwargs=sample_model_kwargs, progress=True, device=device
-                )
-                dist.barrier()
-                if use_cfg: #remove null samples
-                    samples, _ = samples.chunk(2, dim=0)
-                samples = vae.decode(samples / 0.18215).sample
-
-            # Save and display images:
-            save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
-            del samples
         
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
@@ -488,12 +486,13 @@ if __name__ == "__main__":
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
 
-    parser.add_argument("--eval-every", type=int, default=100)
-    parser.add_argument("--eval-refdir", type=str, default=None)
-    parser.add_argument("--eval-nsamples", type=int, default=1000)
-    parser.add_argument("--eval-bs", type=int, default=4)
-    parser.add_argument("--eval-eta", type=float, default=0.6)
-    parser.add_argument("--eval-cfg-scale", type=float, default=1.0)
+    group = parser.add_argument_group("Eval")
+    group.add_argument("--eval-every", type=int, default=100)
+    group.add_argument("--eval-refdir", type=str, default=None)
+    group.add_argument("--eval-nsamples", type=int, default=1000)
+    group.add_argument("--eval-bs", type=int, default=4)
+    group.add_argument("--eval-eta", type=float, default=0.6)
+    group.add_argument("--eval-cfg-scale", type=float, default=1.0)
     
     args = parser.parse_args()
     main(args)

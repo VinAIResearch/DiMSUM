@@ -7,6 +7,13 @@
 """
 A minimal training script for DiT using PyTorch DDP.
 """
+
+import datetime
+import math
+import sys
+from pathlib import Path
+import gc
+
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -35,7 +42,13 @@ from diffusers.models import AutoencoderKL
 from tqdm import tqdm
 
 from create_model import create_model
+from ptflops import get_model_complexity_info
 from transport import create_transport, Sampler
+
+eval_import_path = (Path(__file__).parent.parent / "eval_toolbox").resolve().as_posix()
+sys.path.append(eval_import_path)
+import dnnlib
+from pytorch_fid import metric_main, metric_utils
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -159,11 +172,12 @@ def main(args):
         path_args={"diffusion_form": args.diffusion_form},
     )  # default: velocity; 
     transport_sampler = Sampler(transport)
-    vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"iDiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-5, verbose=True)
 
     if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
@@ -194,13 +208,6 @@ def main(args):
         train_steps = 0
     requires_grad(ema, False)
 
-    # Setup data:
-    # transform = transforms.Compose([
-    #     transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
-    # ])
     dataset = get_dataset(args)
     sampler = DistributedSampler(
         dataset,
@@ -284,6 +291,9 @@ def main(args):
                 log_steps = 0
                 start_time = time()
 
+        # if not args.no_lr_decay:
+        #     scheduler.step()
+
         if rank == 0:
             # latest checkpoint
             if epoch % args.save_content_every == 0:
@@ -325,6 +335,100 @@ def main(args):
             # Save and display images:
             save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
             del samples
+
+        if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
+            ref_dir = Path(args.eval_refdir)
+            if ref_dir.exists():
+                n = args.eval_bs
+                using_cfg = args.eval_cfg_scale > 1.0
+                global_batch_size = n * dist.get_world_size()
+                total_samples = int(
+                    math.ceil(args.eval_nsamples / global_batch_size)
+                    * global_batch_size
+                )
+                samples_needed_this_gpu = int(total_samples // dist.get_world_size())
+                iterations = int(samples_needed_this_gpu // n)
+                pbar = range(iterations)
+                pbar = tqdm(pbar) if rank == 0 else pbar
+                total = 0
+                p = Path(experiment_dir) / f"fid{args.eval_nsamples}"
+                p.mkdir(exist_ok=True, parents=True)
+                model.eval()
+                for _ in pbar:
+                    # Sample inputs:
+                    z = torch.randn(
+                        n, 4, latent_size, latent_size, device=device
+                    )
+                    y = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
+                    # Setup classifier-free guidance:
+                    if use_cfg:
+                        z = torch.cat([z, z], 0)
+                        y_null = torch.tensor([args.num_classes] * n, device=device)
+                        y = torch.cat([y, y_null], 0)
+                        sample_model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+                        model_eval_fn = model.forward_with_cfg
+                    else:
+                        sample_model_kwargs = dict(y=y)
+                        model_eval_fn = model.forward
+
+                    # Sample images:
+                    with torch.no_grad():
+                        sample_fn = transport_sampler.sample_ode() # default to ode sampling
+                        samples = sample_fn(z, model_eval_fn, **sample_model_kwargs)[-1]
+
+                    if using_cfg:
+                        samples, _ = samples.chunk(
+                            2, dim=0
+                        )  # Remove null class samples
+
+                    samples = vae.decode(samples / 0.18215).sample
+                    samples = (
+                        torch.clamp(127.5 * samples + 128.0, 0, 255)
+                        .permute(0, 2, 3, 1)
+                        .to("cpu", dtype=torch.uint8)
+                        .numpy()
+                    )
+
+                    # Save samples to disk as individual .png files
+                    for i, sample in enumerate(samples):
+                        index = i * dist.get_world_size() + rank + total
+                        if index >= args.eval_nsamples:
+                            break
+                        pp = p / f"{index:06d}.jpg"
+                        Image.fromarray(sample).save(pp.as_posix())
+                    total += global_batch_size
+
+                model.train()
+                eval_args = dnnlib.EasyDict()
+                eval_args.dataset_kwargs = dnnlib.EasyDict(
+                    class_name="training.dataset.ImageFolderDataset",
+                    path=ref_dir.as_posix(),
+                    xflip=True,
+                )
+                eval_args.gen_dataset_kwargs = dnnlib.EasyDict(
+                    class_name="training.dataset.ImageFolderDataset",
+                    path=p.resolve().as_posix(),
+                    xflip=True,
+                )
+                progress = metric_utils.ProgressMonitor(verbose=True)
+                if rank == 0:
+                    print("Calculating FID...")
+                result_dict = metric_main.calc_metric(metric="fid2k_full", 
+                                                    dataset_kwargs=eval_args.dataset_kwargs,
+                                                    num_gpus=dist.get_world_size(),
+                                                    rank=rank, 
+                                                    device=device,
+                                                    progress=progress,
+                                                    gen_dataset_kwargs=eval_args.gen_dataset_kwargs,
+                                                    cache=True)
+                if rank == 0:
+                    metric_main.report_metric(result_dict, run_dir=p.as_posix(), snapshot_pkl=p.as_posix())
+                del result_dict, samples
+                gc.collect()
+                torch.cuda.empty_cache()
+            else:
+                print(f"Reference directory {ref_dir} does not exist, skip eval")
+            dist.barrier()
         
 
     model.eval()  # important! This disables randomized embedding dropout
@@ -355,7 +459,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
-    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="mse")  # Choice doesn't affect training
+    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
@@ -366,6 +470,18 @@ if __name__ == "__main__":
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
 
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
+    parser.add_argument("--no-lr-decay", action='store_true', default=False)
+
+
+    group = parser.add_argument_group("Eval")
+    group.add_argument("--eval-every", type=int, default=100)
+    group.add_argument("--eval-refdir", type=str, default=None)
+    group.add_argument("--eval-nsamples", type=int, default=1000)
+    group.add_argument("--eval-bs", type=int, default=4)
+    group.add_argument("--eval-cfg-scale", type=float, default=1.0)
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)

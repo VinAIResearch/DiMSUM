@@ -676,7 +676,7 @@ def create_block(
     )
     if layer_idx % 2 == 0 or not is_moe:
         mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
-       if block_type == "raw":
+        if block_type == "raw":
             block = DiMBlockRaw(
                 d_model,
                 mixer_cls,
@@ -694,7 +694,7 @@ def create_block(
                 fused_add_norm=fused_add_norm,
                 residual_in_fp32=residual_in_fp32,
             )
-    elif :
+    else:
         mixer_cls = partial(SwitchMLP, 
             layer_idx=layer_idx, 
             add_bias_linear=add_bias_linear, 
