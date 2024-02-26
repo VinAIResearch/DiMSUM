@@ -45,36 +45,47 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --model $MODEL_TYPE \
     --per-proc-batch-size 100 \
     --image-size 256 \
-    --ckpt results/idimxl2_celeb256_gvp-DiM-XL-2/checkpoints/{epoch:07d}.pt \
+    --ckpt {ckpt_root}/{epoch:07d}.pt \
     --num-fid-samples 10_000 \
     --path-type GVP \
-    --num-classes 0 \
+    --num-classes 1 \
     --sampling-method {method} \
     --num-sampling-steps {num_steps} \
-    --diffusion-form sigma \
+    --diffusion-form {diff_form} \
     --sample-dir samples/{exp} \
+    --block-type linear \
+
+
+# CUDA_VISIBLE_DEVICES=0 python eval_toolbox/calc_metrics.py \
+#     --metrics=fid10k_full,pr10k3_full 
+#     --data={real_data} 
+#     --mirror=1 
+#     --gen_data=samples/{exp}/
+#     --img_resolution=256
 
 """
 
 ###### ARGS
-model_type = "DiM-XL/2" # or "DiT-L/2" or "adm"
-exp = "idimxl2_celeb256_gvp-DiM-XL-2"
+model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
+exp = "idiml2_linear_celeb256_gvp-DiM-L-2"
 ckpt_root = f"results/{exp}/checkpoints/"
 BASE_PORT = 18016
-num_gpus = 1
-device = "0,"
+num_gpus = 2
+device = "0,1"
+real_data = "/lustre/scratch/client/scratch/research/group/anhgroup/haopt12/real_samples/celeba_256/"
 
 config = pd.DataFrame({
-    "epochs": list(range(200, 600, 25)),
-    "num_steps": [250]*len(range(200, 600, 25)),
-    "methods": ['dopri5']*len(range(200, 600, 25)),
-    "cfg_scale": [1.]*len(range(200, 600, 25)),
+    "epochs": [200],
+    "num_steps": [250],
+    "methods": ['dopri5'],
+    "cfg_scale": [1.],
+    "diff_form": ["none"]
 })
 print(config)
 
 ###################################
-slurm_file_path = f"/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurm_scripts/{exp}/run2.sh"
-slurm_output = f"/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurm_scripts/{exp}/"
+slurm_file_path = f"/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_scripts/{exp}/run2.sh"
+slurm_output = f"/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_scripts/{exp}/"
 output_log = f"{slurm_output}/log"
 os.makedirs(slurm_output, exist_ok=True)
 job_name = "test"
@@ -95,6 +106,9 @@ for idx, row in config.iterrows():
         num_steps=row.num_steps,
         device=device,
         cfg_scale=row.cfg_scale,
+        diff_form=row.diff_form,
+        real_data=real_data,
+        ckpt_root=ckpt_root,
     )
     mode = "w" if idx == 0 else "a"
     with open(slurm_file_path, mode) as f:

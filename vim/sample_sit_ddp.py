@@ -102,7 +102,7 @@ def main(mode, args):
             num_steps=args.num_sampling_steps,
         )
 
-    vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"../stabilityai/sd-vae-ft-{args.vae}").to(device)
     assert args.cfg_scale >= 1.0, "In almost all cases, cfg_scale be >= 1.0"
     using_cfg = args.cfg_scale > 1.0
 
@@ -141,7 +141,7 @@ def main(mode, args):
     pbar = tqdm(pbar) if rank == 0 else pbar
     total = 0
     
-    use_label = True if args.num_classes else False
+    use_label = True if args.num_classes > 1 else False
     for i in pbar:
         # Sample inputs:
         z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
@@ -201,12 +201,12 @@ if __name__ == "__main__":
     assert mode in ["ODE", "SDE"], "Invalid mode. Please choose 'ODE' or 'SDE'"
 
     parser.add_argument("--model", type=str, default="DiM-XL/2")
-    parser.add_argument("--vae",  type=str, choices=["ema", "mse"], default="mse")
+    parser.add_argument("--vae",  type=str, choices=["ema", "mse"], default="ema")
     parser.add_argument("--sample-dir", type=str, default="samples")
     parser.add_argument("--per-proc-batch-size", type=int, default=4)
     parser.add_argument("--num-fid-samples", type=int, default=50_000)
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    parser.add_argument("--num-classes", type=int, default=0)
+    parser.add_argument("--num-classes", type=int, default=1)
     parser.add_argument("--cfg-scale",  type=float, default=1.0)
     parser.add_argument("--num-sampling-steps", type=int, default=250)
     parser.add_argument("--global-seed", type=int, default=0)
@@ -216,9 +216,11 @@ if __name__ == "__main__":
                         help="Optional path to a SiT checkpoint (default: auto-download a pre-trained SiT-XL/2 model).")
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--num-in-channels", type=int, default=4)
-    parser.add_argument("--label-dropout", type=float, default=0.15)
+    parser.add_argument("--label-dropout", type=float, default=-1)
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)
@@ -245,8 +247,8 @@ if __name__ == "__main__":
     elif mode == "SDE":
         group = parser.add_argument_group("SDE arguments")
         group.add_argument("--sampling-method", type=str, default="Euler", choices=["Euler", "Heun"])
-        group.add_argument("--diffusion-form", type=str, default="sigma", \
-                            choices=["constant", "SBDM", "sigma", "linear", "decreasing", "increasing-decreasing", "log"],\
+        group.add_argument("--diffusion-form", type=str, default="none", \
+                            choices=["none", "constant", "SBDM", "sigma", "linear", "decreasing", "increasing-decreasing", "log"],\
                             help="form of diffusion coefficient in the SDE")
         group.add_argument("--diffusion-norm", type=float, default=1.0)
         group.add_argument("--last-step", type=none_or_str, default="Mean", choices=[None, "Mean", "Tweedie", "Euler"],\
