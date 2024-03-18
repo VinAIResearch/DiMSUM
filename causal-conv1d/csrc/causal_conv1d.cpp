@@ -188,6 +188,72 @@ causal_conv1d_fwd(const at::Tensor &x, const at::Tensor &weight,
     return out;
 }
 
+
+at::Tensor
+causal_conv1d_fwd_cond(const at::Tensor &x, const at::Tensor &weight,
+                  const c10::optional<at::Tensor> &bias_,
+                  bool silu_activation, const at::Tensor &init_x) {
+    auto input_type = x.scalar_type();
+    auto weight_type = weight.scalar_type();
+    TORCH_CHECK(input_type == at::ScalarType::Float || input_type == at::ScalarType::Half || input_type == at::ScalarType::BFloat16);
+    TORCH_CHECK(weight_type == at::ScalarType::Float || weight_type == at::ScalarType::Half || weight_type == at::ScalarType::BFloat16);
+
+    TORCH_CHECK(x.is_cuda());
+    TORCH_CHECK(weight.is_cuda());
+
+    const auto sizes = x.sizes();
+    const int batch_size = sizes[0];
+    const int dim = sizes[1];
+    const int seqlen = sizes[2];
+    const int width = weight.size(-1);
+
+    CHECK_SHAPE(x, batch_size, dim, seqlen);
+    CHECK_SHAPE(weight, dim, width);
+
+    TORCH_CHECK(x.stride(2) == 1 || x.stride(1) == 1);
+    const bool is_channel_last = x.stride(1) == 1 && x.stride(2) > 1;
+
+    if (is_channel_last) {
+        TORCH_CHECK(dim % 8 == 0, "causal_conv1d only supports channel dimension divisible by 8 for now");
+    }
+    TORCH_CHECK(width >= 2 && width <= 4, "causal_conv1d only supports width between 2 and 4");
+
+
+    if (bias_.has_value()) {
+        auto bias = bias_.value();
+        TORCH_CHECK(bias.scalar_type() == weight_type);
+        TORCH_CHECK(bias.is_cuda());
+        TORCH_CHECK(bias.stride(-1) == 1);
+        CHECK_SHAPE(bias, dim);
+    }
+
+    if (init_x.has_value()) {
+        at::Tensor out = init_x.value();
+    } else {
+        at::Tensor out = torch::empty_like(x);
+    }
+
+    ConvParamsBase params;
+    set_conv_params_fwd(params, batch_size, dim, seqlen, width, x, weight, out,
+                        bias_.has_value() ? bias_.value().data_ptr() : nullptr,
+                        silu_activation);
+
+    // Otherwise the kernel will be launched from cuda:0 device
+    // Cast to char to avoid compiler warning about narrowing
+    at::cuda::CUDAGuard device_guard{(char)x.get_device()};
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    DISPATCH_ITYPE_FLOAT_AND_HALF_AND_BF16(x.scalar_type(), "causal_conv1d_fwd", [&] {
+        DISPATCH_WTYPE_FLOAT_AND_HALF_AND_BF16(weight.scalar_type(), "causal_conv1d_fwd", [&] {
+            if (!is_channel_last) {
+                causal_conv1d_fwd_cuda<input_t, weight_t>(params, stream);
+            } else {
+                causal_conv1d_channellast_fwd_cuda<input_t, weight_t>(params, stream);
+            }
+        });
+    });
+    return out;
+}
+
 std::vector<at::Tensor>
 causal_conv1d_bwd(const at::Tensor &x, const at::Tensor &weight,
                   const c10::optional<at::Tensor> &bias_,
@@ -266,6 +332,7 @@ causal_conv1d_bwd(const at::Tensor &x, const at::Tensor &weight,
     });
     return {dx, dweight.to(weight.dtype()), bias_.has_value() ? dbias.to(bias_.value().dtype()) : dbias};
 }
+
 
 at::Tensor
 causal_conv1d_update(const at::Tensor &x,

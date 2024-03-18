@@ -41,12 +41,12 @@ echo "----------------------------"
 echo $MODEL_TYPE $EPOCH_ID $EXP {method} {num_steps}
 echo "----------------------------"
 
-CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node={num_gpus} vim/sample_sit_ddp.py ODE \
+CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node={num_gpus} vim/sample_sit_ddp.py {sampler} \
     --model $MODEL_TYPE \
     --per-proc-batch-size 100 \
     --image-size 256 \
     --ckpt {ckpt_root}/{epoch:07d}.pt \
-    --num-fid-samples 10_000 \
+    --num-fid-samples 50_000 \
     --path-type GVP \
     --num-classes 1 \
     --sampling-method {method} \
@@ -75,11 +75,12 @@ device = "0,1"
 real_data = "/lustre/scratch/client/scratch/research/group/anhgroup/haopt12/real_samples/celeba_256/"
 
 config = pd.DataFrame({
-    "epochs": [200],
-    "num_steps": [250],
-    "methods": ['dopri5'],
-    "cfg_scale": [1.],
-    "diff_form": ["none"]
+    "epochs": [200]*3,
+    "num_steps": [250]*3,
+    "methods": ['dopri5', 'Euler', 'Euler'],
+    "cfg_scale": [1.]*3,
+    "diff_form": ["none", "increasing-decreasing", "log"],
+    "sampler": ['ODE', 'SDE', 'SDE']
 })
 print(config)
 
@@ -109,6 +110,7 @@ for idx, row in config.iterrows():
         diff_form=row.diff_form,
         real_data=real_data,
         ckpt_root=ckpt_root,
+        sampler=row.sampler,
     )
     mode = "w" if idx == 0 else "a"
     with open(slurm_file_path, mode) as f:

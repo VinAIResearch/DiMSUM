@@ -45,3 +45,26 @@ class MLP(nn.Module):
         intermediate = self.activation_func(intermediate)
         output = self.linear_fc2(intermediate)
         return output
+
+
+class GatedMLP(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        hidden_features: Optional[int] = None,
+        out_features: Optional[int] = None,
+        drop: float = 0.0,
+        bias: bool = True,
+    ) -> None:
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.w12 = nn.Linear(in_features, 2 * hidden_features, bias=bias)
+        self.w3 = nn.Linear(hidden_features, out_features, bias=bias)
+        self.act_layer = F.gelu
+
+    def forward(self, x: Tensor) -> Tensor:
+        x12 = self.w12(x)
+        x1, x2 = x12.chunk(2, dim=-1)
+        hidden = self.act_layer(x1) * x2
+        return self.w3(hidden)
