@@ -469,6 +469,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--lr", type=float, default=1e-4)
 
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])

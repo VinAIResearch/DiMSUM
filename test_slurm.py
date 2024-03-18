@@ -43,32 +43,32 @@ echo "----------------------------"
 
 CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node={num_gpus} vim/sample_ddp.py \
     --model $MODEL_TYPE \
-    --per-proc-batch-size 4 \
+    --per-proc-batch-size 100 \
     --image-size 256 \
     --ckpt {ckpt_root}/{epoch:07d}.pt \
     --num-fid-samples 10_000 \
     --num-classes 1 \
     --num-sampling-steps {num_steps} \
     --sample-dir samples/{exp} \
-    --routing-mode top1 \
-    --is-moe \
+    # --routing-mode top1 \
+    # --is-moe \
 #     # --gated-linear-unit \
 
 """
 
 ###### ARGS
-model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
-exp = "idimxl2_celeb256_gvp-DiM-XL-2"
+model_type = "DiM-XL/2" # or "DiT-L/2" or "adm"
+exp = "dim_celeb256-DiM-XL-2-DiM-XL-2"
 ckpt_root = f"results/{exp}/checkpoints/"
 BASE_PORT = 18016
-num_gpus = 1
-device = "0,"
+num_gpus = 2
+device = "0,1"
 
 config = pd.DataFrame({
-    "epochs": list(range(200, 400, 25)),
-    "num_steps": [250]*len(range(200, 400, 25)),
-    "methods": ['Euler']*len(range(200, 400, 25)),
-    "cfg_scale": [1.]*len(range(200, 400, 25)),
+    "epochs": [350, 375, 400],
+    "num_steps": [250]*3,
+    "methods": ['ddpm']*3,
+    "cfg_scale": [1.]*3,
 })
 print(config)
 

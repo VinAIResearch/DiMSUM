@@ -69,7 +69,7 @@ def main(args):
     model.eval()  # important!
 
     diffusion = create_diffusion(str(args.num_sampling_steps), learn_sigma=args.learn_sigma)
-    vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"../stabilityai/sd-vae-ft-{args.vae}").to(device)
     assert args.cfg_scale >= 1.0, "In almost all cases, cfg_scale be >= 1.0"
     using_cfg = args.cfg_scale > 1.0
 

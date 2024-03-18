@@ -66,13 +66,12 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
 """
 
 ###### ARGS
-model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
-exp = "idiml2_linear_celeb256_gvp-DiM-L-2"
+model_type = "DiM-XL/2" # or "DiT-L/2" or "adm"
+exp = "idimxl2_celeb256_gvp_difflog-DiM-XL-2"
 ckpt_root = f"results/{exp}/checkpoints/"
-BASE_PORT = 18016
+BASE_PORT = 18017
 num_gpus = 2
 device = "0,1"
-real_data = "/lustre/scratch/client/scratch/research/group/anhgroup/haopt12/real_samples/celeba_256/"
 
 config = pd.DataFrame({
     "epochs": [200]*3,
@@ -108,11 +107,13 @@ for idx, row in config.iterrows():
         device=device,
         cfg_scale=row.cfg_scale,
         diff_form=row.diff_form,
+        sampler=row.sampler,
         real_data=real_data,
         ckpt_root=ckpt_root,
         sampler=row.sampler,
     )
-    mode = "w" if idx == 0 else "a"
+    # mode = "w" if idx == 0 else "a"
+    mode = "a"
     with open(slurm_file_path, mode) as f:
         f.write(slurm_command)
 print("Slurm script is saved at", slurm_file_path)
