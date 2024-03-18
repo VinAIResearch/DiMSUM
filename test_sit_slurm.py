@@ -41,34 +41,37 @@ echo "----------------------------"
 echo $MODEL_TYPE $EPOCH_ID $EXP {method} {num_steps}
 echo "----------------------------"
 
-CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node={num_gpus} vim/sample_sit_ddp.py ODE \
+CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node={num_gpus} vim/sample_sit_ddp.py {sampler} \
     --model $MODEL_TYPE \
     --per-proc-batch-size 100 \
     --image-size 256 \
-    --ckpt results/idimxl2_celeb256_gvp-DiM-XL-2/checkpoints/{epoch:07d}.pt \
-    --num-fid-samples 10_000 \
+    --ckpt results/{exp}/checkpoints/{epoch:07d}.pt \
+    --num-fid-samples 50_000 \
     --path-type GVP \
-    --num-classes 0 \
+    --num-classes 1 \
     --sampling-method {method} \
     --num-sampling-steps {num_steps} \
-    --diffusion-form sigma \
+    --diffusion-form {diff_form} \
     --sample-dir samples/{exp} \
 
 """
 
 ###### ARGS
 model_type = "DiM-XL/2" # or "DiT-L/2" or "adm"
-exp = "idimxl2_celeb256_gvp-DiM-XL-2"
+exp = "idimxl2_celeb256_gvp_difflog-DiM-XL-2"
 ckpt_root = f"results/{exp}/checkpoints/"
-BASE_PORT = 18016
-num_gpus = 1
-device = "0,"
+BASE_PORT = 18017
+num_gpus = 2
+device = "0,1"
 
 config = pd.DataFrame({
-    "epochs": list(range(200, 600, 25)),
-    "num_steps": [250]*len(range(200, 600, 25)),
-    "methods": ['dopri5']*len(range(200, 600, 25)),
-    "cfg_scale": [1.]*len(range(200, 600, 25)),
+    "epochs": [200], # list(range(200, 600, 25)),
+    "num_steps": [250], # len(range(200, 600, 25)),
+    "methods": ['Euler'], # 'Euler', 'Heun'
+    "cfg_scale": [1.],
+    "diff_form": ["log"],
+    "sampler": ['SDE'],
+
 })
 print(config)
 
@@ -95,8 +98,11 @@ for idx, row in config.iterrows():
         num_steps=row.num_steps,
         device=device,
         cfg_scale=row.cfg_scale,
+        diff_form=row.diff_form,
+        sampler=row.sampler,
     )
-    mode = "w" if idx == 0 else "a"
+    # mode = "w" if idx == 0 else "a"
+    mode = "a"
     with open(slurm_file_path, mode) as f:
         f.write(slurm_command)
 print("Slurm script is saved at", slurm_file_path)

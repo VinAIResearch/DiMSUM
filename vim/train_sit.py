@@ -159,11 +159,11 @@ def main(args):
         path_args={"diffusion_form": args.diffusion_form},
     )  # default: velocity; 
     transport_sampler = Sampler(transport)
-    vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"iDiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
 
     if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
@@ -355,7 +355,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
-    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="mse")  # Choice doesn't affect training
+    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
@@ -365,6 +365,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--lr", type=float, default=1e-4)
 
 
     group = parser.add_argument_group("MoE arguments")

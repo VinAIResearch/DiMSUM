@@ -17,7 +17,7 @@
 set -x
 set -e
 
-export MASTER_PORT=10121
+export MASTER_PORT=10122
 export WORLD_SIZE=1
 
 export SLURM_JOB_NODELIST=$(scontrol show hostnames $SLURM_JOB_NODELIST | tr '\n' ' ')
@@ -33,32 +33,35 @@ echo "NODELIST="${SLURM_NODELIST}
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
-CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train_sit.py \
-        --exp idimxl2_celeb256_gvp_difflog \
-        --model DiM-XL/2 \
-        --datadir ./vim/data/celeba-lmdb/ \
-        --dataset celeba_256 \
-        --num-classes 1 \
-        --global-batch-size 32 \
-        --epochs 800 \
-        --path-type GVP \
-        --diffusion-form log \
-        # --bimamba-type none \
-        # --learn-sigma \
-#         # --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
-
 # CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train_sit.py \
-#         --exp idimxl2_church_GVP \
+#         --exp idimxl2_celeb256_gvp_difflog \
 #         --model DiM-XL/2 \
-#         --datadir ./vim/data/lsun/ \
-#         --dataset lsun_church \
+#         --datadir ./vim/data/celeba-lmdb/ \
+#         --dataset celeba_256 \
 #         --num-classes 1 \
 #         --global-batch-size 32 \
 #         --epochs 800 \
 #         --path-type GVP \
+#         --diffusion-form log \
+#         --resume \
 #         # --bimamba-type none \
 #         # --learn-sigma \
 # #         # --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
+
+CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train_sit.py \
+        --exp idimxl2_church_GVP_lr1e-5 \
+        --model DiM-XL/2 \
+        --datadir ./vim/data/lsun/ \
+        --dataset lsun_church \
+        --num-classes 1 \
+        --global-batch-size 32 \
+        --epochs 800 \
+        --path-type GVP \
+        --lr 1e-5 \
+        --resume \
+        # --bimamba-type none \
+        # --learn-sigma \
+#         # --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
 
 # CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train.py \
 #         --exp diml2_moe_celeb256 \

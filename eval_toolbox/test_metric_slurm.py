@@ -37,7 +37,7 @@ echo "----------------------------"
 echo {gen_data}
 echo "----------------------------"
 
-python eval_toolbox/calc_metrics.py --metrics=fid50k_full,pr50k3_full --data={real_data} --mirror=1 --gen_data={gen_data} --img_resolution=256
+CUDA_VISIBLE_DEVICES={device} python eval_toolbox/calc_metrics.py --metrics=fid50k_full,pr50k3_full --data={real_data} --mirror=1 --gen_data={gen_data} --img_resolution=256 --run_dir={slurm_output}
 
 """
 
@@ -49,7 +49,7 @@ num_gpus = 1
 device = "0,"
 
 config = pd.DataFrame({
-    "gen_data": [f"samples/idimxl2_celeb256_gvp-DiM-XL-2/DiM-XL-2-0000475-cfg-1.0-100-SDE-250-Euler-sigma-Mean--1" for e in range(500, 626, 25)],
+    "gen_data": ['samples/idimxl2_celeb256_gvp_difflog-DiM-XL-2/DiM-XL-2-0000200-cfg-1.0-100-SDE-250-Heun-log-Mean--1', 'samples/idimxl2_celeb256_gvp_difflog-DiM-XL-2/DiM-XL-2-0000200-cfg-1.0-100-ODE-250-dopri5', 'samples/idimxl2_celeb256_gvp_difflog-DiM-XL-2/DiM-XL-2-0000200-cfg-1.0-100-SDE-250-Euler-log-Mean--1'],
 })
 print(config)
 
