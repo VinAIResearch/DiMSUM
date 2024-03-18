@@ -64,7 +64,8 @@ def subprocess_fn(rank, args, temp_dir):
                                               device=device,
                                               progress=progress,
                                               gen_dataset_kwargs=args.gen_dataset_kwargs,
-                                              cache=False)
+                                              cache=False,
+                                            )
         if rank == 0:
             metric_main.report_metric(result_dict, run_dir=args.run_dir, snapshot_pkl=args.network_pkl)
         if rank == 0 and args.verbose:

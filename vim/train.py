@@ -8,6 +8,11 @@
 A minimal training script for DiT using PyTorch DDP.
 """
 import datetime
+import math
+import sys
+from pathlib import Path
+import gc
+
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -32,10 +37,16 @@ from datasets_prep import get_dataset
 
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
-
+from download import find_model
 from tqdm import tqdm
-
+from ptflops import get_model_complexity_info
 from create_model import create_model
+
+eval_import_path = (Path(__file__).parent.parent / "eval_toolbox").resolve().as_posix()
+sys.path.append(eval_import_path)
+import dnnlib
+from pytorch_fid import metric_main, metric_utils
+
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -156,7 +167,8 @@ def main(args):
     logger.info(f"DiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-5, verbose=True)
 
     if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
@@ -187,13 +199,6 @@ def main(args):
         train_steps = 0
     requires_grad(ema, False)
 
-    # Setup data:
-    # transform = transforms.Compose([
-    #     transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
-    # ])
     dataset = get_dataset(args)
     sampler = DistributedSampler(
         dataset,
@@ -213,8 +218,7 @@ def main(args):
     )
     logger.info(f"Dataset contains {len(dataset):,} images ({args.datadir})")
 
-    # Prepare models for training:
-    update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
+    
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
 
@@ -277,6 +281,8 @@ def main(args):
                 running_loss = 0
                 log_steps = 0
                 start_time = time()
+        if not args.no_lr_decay:
+            scheduler.step()
 
         if rank == 0:
             # latest checkpoint
@@ -299,13 +305,14 @@ def main(args):
                     "model": model.module.state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
-                    "args": args
+                    "args": args,
+                    "epoch": epoch,
+                    "train_step": train_steps,
                 }
                 checkpoint_path = f"{checkpoint_dir}/{epoch:07d}.pt"
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
             dist.barrier()
-
 
         if rank == 0 and epoch % args.plot_every == 0:
             with torch.no_grad():
@@ -320,6 +327,118 @@ def main(args):
             # Save and display images:
             save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
             del samples
+
+        if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
+            ref_dir = Path(args.eval_refdir)
+            if ref_dir.exists():
+                n = args.eval_bs
+                using_cfg = args.eval_cfg_scale > 1.0
+                global_batch_size = n * dist.get_world_size()
+                total_samples = int(
+                    math.ceil(args.eval_nsamples / global_batch_size)
+                    * global_batch_size
+                )
+                samples_needed_this_gpu = int(total_samples // dist.get_world_size())
+                iterations = int(samples_needed_this_gpu // n)
+                pbar = range(iterations)
+                pbar = tqdm(pbar) if rank == 0 else pbar
+                total = 0
+                p = Path(checkpoint_dir) / f"fid_{epoch:04d}"
+                p.mkdir(exist_ok=True, parents=True)
+                model.eval()
+                for _ in pbar:
+                    # Sample inputs:
+                    z = torch.randn(
+                        n, 4, latent_size, latent_size, device=device
+                    )
+                    y = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
+                    # Setup classifier-free guidance:
+                    if use_cfg:
+                        z = torch.cat([z, z], 0)
+                        y_null = torch.tensor([args.num_classes] * n, device=device)
+                        y = torch.cat([y, y_null], 0)
+                        sample_model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+                        model_eval_fn = model.forward_with_cfg
+                    else:
+                        sample_model_kwargs = dict(y=y)
+                        model_eval_fn = model.forward
+
+                    # Sample images:
+                    if args.eval_eta is None:
+                        samples = diffusion.p_sample_loop(
+                            model_eval_fn,
+                            z.shape,
+                            z,
+                            clip_denoised=False,
+                            model_kwargs=model_kwargs,
+                            progress=False,
+                            device=device,
+                        )
+                    else:
+                        samples = diffusion.ddim_sample_loop(
+                            model_eval_fn,
+                            z.shape,
+                            z,
+                            clip_denoised=False,
+                            model_kwargs=model_kwargs,
+                            progress=False,
+                            device=device,
+                            eta=args.eval_eta,
+                        )
+                    if using_cfg:
+                        samples, _ = samples.chunk(
+                            2, dim=0
+                        )  # Remove null class samples
+
+                    samples = vae.decode(samples / 0.18215).sample
+                    samples = (
+                        torch.clamp(127.5 * samples + 128.0, 0, 255)
+                        .permute(0, 2, 3, 1)
+                        .to("cpu", dtype=torch.uint8)
+                        .numpy()
+                    )
+
+                    # Save samples to disk as individual .png files
+                    for i, sample in enumerate(samples):
+                        index = i * dist.get_world_size() + rank + total
+                        if index >= args.eval_nsamples:
+                            break
+                        pp = p / f"{index:06d}.jpg"
+                        Image.fromarray(sample).save(pp.as_posix())
+                    total += global_batch_size
+
+                model.train()
+                eval_args = dnnlib.EasyDict()
+                eval_args.dataset_kwargs = dnnlib.EasyDict(
+                    class_name="training.dataset.ImageFolderDataset",
+                    path=ref_dir.as_posix(),
+                    xflip=True,
+                )
+                eval_args.gen_dataset_kwargs = dnnlib.EasyDict(
+                    class_name="training.dataset.ImageFolderDataset",
+                    path=p.resolve().as_posix(),
+                    xflip=True,
+                )
+                progress = metric_utils.ProgressMonitor(verbose=True)
+                if rank == 0:
+                    print("Calculating FID...")
+                result_dict = metric_main.calc_metric(metric="fid2k_full", 
+                                                    dataset_kwargs=eval_args.dataset_kwargs,
+                                                    num_gpus=dist.get_world_size(),
+                                                    rank=rank, 
+                                                    device=device,
+                                                    progress=progress,
+                                                    gen_dataset_kwargs=eval_args.gen_dataset_kwargs,
+                                                    cache=True)
+                if rank == 0:
+                    metric_main.report_metric(result_dict, run_dir=p.as_posix(), snapshot_pkl=p.as_posix())
+                del result_dict, samples
+                gc.collect()
+                torch.cuda.empty_cache()
+            else:
+                print(f"Reference directory {ref_dir} does not exist, skip eval")
+            dist.barrier()
+
         
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
@@ -332,6 +451,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='cifar10', help='name of dataset')
     parser.add_argument("--exp", type=str, required=True)
+    parser.add_argument("--resume", type=str, default=None, required=False)
     parser.add_argument("--datadir", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--model", type=str, default="MambaDiffV1_XL_2")
@@ -361,6 +481,18 @@ if __name__ == "__main__":
     parser.add_argument("--model-ckpt", type=str, default='')
     parser.add_argument("--resume", action="store_true")
     
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
+    parser.add_argument("--no-lr-decay", action='store_true', default=False)
+
+    group = parser.add_argument_group("Eval")
+    group.add_argument("--eval-every", type=int, default=100)
+    group.add_argument("--eval-refdir", type=str, default=None)
+    group.add_argument("--eval-nsamples", type=int, default=1000)
+    group.add_argument("--eval-bs", type=int, default=4)
+    group.add_argument("--eval-eta", type=float, default=0.6)
+    group.add_argument("--eval-cfg-scale", type=float, default=1.0)
     
     args = parser.parse_args()
     main(args)

@@ -45,14 +45,23 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --model $MODEL_TYPE \
     --per-proc-batch-size 100 \
     --image-size 256 \
-    --ckpt results/{exp}/checkpoints/{epoch:07d}.pt \
-    --num-fid-samples 50_000 \
+    --ckpt {ckpt_root}/{epoch:07d}.pt \
+    --num-fid-samples 10_000 \
     --path-type GVP \
     --num-classes 1 \
     --sampling-method {method} \
     --num-sampling-steps {num_steps} \
     --diffusion-form {diff_form} \
     --sample-dir samples/{exp} \
+    --block-type linear \
+
+
+# CUDA_VISIBLE_DEVICES=0 python eval_toolbox/calc_metrics.py \
+#     --metrics=fid10k_full,pr10k3_full 
+#     --data={real_data} 
+#     --mirror=1 
+#     --gen_data=samples/{exp}/
+#     --img_resolution=256
 
 """
 
@@ -76,8 +85,8 @@ config = pd.DataFrame({
 print(config)
 
 ###################################
-slurm_file_path = f"/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurm_scripts/{exp}/run2.sh"
-slurm_output = f"/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurm_scripts/{exp}/"
+slurm_file_path = f"/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_scripts/{exp}/run2.sh"
+slurm_output = f"/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_scripts/{exp}/"
 output_log = f"{slurm_output}/log"
 os.makedirs(slurm_output, exist_ok=True)
 job_name = "test"
@@ -100,6 +109,8 @@ for idx, row in config.iterrows():
         cfg_scale=row.cfg_scale,
         diff_form=row.diff_form,
         sampler=row.sampler,
+        real_data=real_data,
+        ckpt_root=ckpt_root,
     )
     # mode = "w" if idx == 0 else "a"
     mode = "a"

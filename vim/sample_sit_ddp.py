@@ -102,7 +102,7 @@ def main(mode, args):
             num_steps=args.num_sampling_steps,
         )
 
-    vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"../stabilityai/sd-vae-ft-{args.vae}").to(device)
     assert args.cfg_scale >= 1.0, "In almost all cases, cfg_scale be >= 1.0"
     using_cfg = args.cfg_scale > 1.0
 
@@ -219,6 +219,8 @@ if __name__ == "__main__":
     parser.add_argument("--label-dropout", type=float, default=-1)
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)
@@ -245,7 +247,7 @@ if __name__ == "__main__":
     elif mode == "SDE":
         group = parser.add_argument_group("SDE arguments")
         group.add_argument("--sampling-method", type=str, default="Euler", choices=["Euler", "Heun"])
-        group.add_argument("--diffusion-form", type=str, default="sigma", \
+        group.add_argument("--diffusion-form", type=str, default="none", \
                             choices=["none", "constant", "SBDM", "sigma", "linear", "decreasing", "increasing-decreasing", "log"],\
                             help="form of diffusion coefficient in the SDE")
         group.add_argument("--diffusion-norm", type=float, default=1.0)

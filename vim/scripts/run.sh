@@ -32,6 +32,7 @@ echo "NODELIST="${SLURM_NODELIST}
 
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
+export OMP_NUM_THREADS=24
 
 CUDA_VISIBLE_DEVICES=1 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train.py \
         --exp dim_celeb256-DiM-XL-2 \
@@ -69,3 +70,18 @@ CUDA_VISIBLE_DEVICES=1 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT 
 #         --routing-mode top1 \
 #         --is-moe \
 #         # --gated-linear-unit \
+
+
+# CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=4 vim/train.py \
+#                                                                                             --exp L_2_linear_block_adain_cpe-1 \
+#                                                                                             --model DiM-L/2 \
+#                                                                                             --datadir ./vim/dataset/celeba-lmdb/ \
+#                                                                                             --dataset celeba_256 \
+#                                                                                             --global-batch-size 112 \
+#                                                                                             --lr 1e-4 \
+#                                                                                             --epochs 600 \
+#                                                                                             --learn-sigma \
+#                                                                                             --pe-type cpe \
+#                                                                                             --block-type linear \
+#                                                                                             --no-lr-decay \
+#                                                                                             # --resume results/notfused_trans_B_2_learn_sigma-DiM-B-2/checkpoints/0000025.pth \

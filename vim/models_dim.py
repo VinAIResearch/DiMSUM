@@ -1,5 +1,6 @@
 import math
 from typing import Optional
+from functools import partial
 
 import numpy as np
 import torch
@@ -11,6 +12,8 @@ from functools import partial
 
 from mamba_ssm.modules.mamba_simple import Mamba
 from rope import *
+from pe.my_rotary import get_2d_sincos_rotary_embed, apply_rotary
+from pe.cpe import PosCNN, AdaInPosCNN
 
 try:
     from mamba.mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
@@ -20,6 +23,163 @@ except ImportError:
 from models_dit import FinalLayer, TimestepEmbedder, LabelEmbedder
 from models_dit import get_2d_sincos_pos_embed, modulate
 from switch_mlp import SwitchMLP
+
+def modulate(x, shift, scale):
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+
+#################################################################################
+#                   Sine/Cosine Positional Embedding Functions                  #
+#################################################################################
+# https://github.com/facebookresearch/mae/blob/main/util/pos_embed.py
+
+def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False, extra_tokens=0):
+    """
+    grid_size: int of the grid height and width
+    return:
+    pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
+    """
+    grid_h = np.arange(grid_size, dtype=np.float32)
+    grid_w = np.arange(grid_size, dtype=np.float32)
+    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
+    grid = np.stack(grid, axis=0)
+
+    grid = grid.reshape([2, 1, grid_size, grid_size])
+    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
+    if cls_token and extra_tokens > 0:
+        pos_embed = np.concatenate([np.zeros([extra_tokens, embed_dim]), pos_embed], axis=0)
+    return pos_embed
+
+
+def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
+    assert embed_dim % 2 == 0
+
+    # use half of dimensions to encode grid_h
+    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
+    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
+
+    emb = np.concatenate([emb_h, emb_w], axis=1) # (H*W, D)
+    return emb
+
+
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+    """
+    embed_dim: output dimension for each position
+    pos: a list of positions to be encoded: size (M,)
+    out: (M, D)
+    """
+    assert embed_dim % 2 == 0
+    omega = np.arange(embed_dim // 2, dtype=np.float64)
+    omega /= embed_dim / 2.
+    omega = 1. / 10000**omega  # (D/2,)
+
+    pos = pos.reshape(-1)  # (M,)
+    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
+
+    emb_sin = np.sin(out) # (M, D/2)
+    emb_cos = np.cos(out) # (M, D/2)
+
+    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+    return emb
+
+#################################################################################
+#               Embedding Layers for Timesteps and Class Labels                 #
+#################################################################################
+
+class TimestepEmbedder(nn.Module):
+    """
+    Embeds scalar timesteps into vector representations.
+    """
+    def __init__(self, hidden_size, frequency_embedding_size=256):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size, bias=True),
+        )
+        self.frequency_embedding_size = frequency_embedding_size
+
+    @staticmethod
+    def timestep_embedding(t, dim, max_period=10000):
+        """
+        Create sinusoidal timestep embeddings.
+        :param t: a 1-D Tensor of N indices, one per batch element.
+                          These may be fractional.
+        :param dim: the dimension of the output.
+        :param max_period: controls the minimum frequency of the embeddings.
+        :return: an (N, D) Tensor of positional embeddings.
+        """
+        # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
+        half = dim // 2
+        freqs = torch.exp(
+            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        ).to(device=t.device)
+        args = t[:, None].float() * freqs[None]
+        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if dim % 2:
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+        return embedding
+
+    def forward(self, t):
+        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_emb = self.mlp(t_freq)
+        return t_emb
+
+
+class LabelEmbedder(nn.Module):
+    """
+    Embeds class labels into vector representations. Also handles label dropout for classifier-free guidance.
+    """
+
+    def __init__(self, num_classes, hidden_size, dropout_prob):
+        super().__init__()
+        use_cfg_embedding = dropout_prob > 0 # 1
+        self.in_channels = num_classes + use_cfg_embedding # 1001
+        self.embedding_table = nn.Embedding(self.in_channels, hidden_size)
+        self.num_classes = num_classes # 1000
+        self.dropout_prob = dropout_prob
+
+    def token_drop(self, labels, force_drop_ids=None):
+        """
+        Drops labels to enable classifier-free guidance.
+        """
+        if force_drop_ids is None:
+            drop_ids = torch.rand(labels.shape[0], device=labels.device) < self.dropout_prob
+        else:
+            drop_ids = force_drop_ids == 1
+        labels = torch.where(drop_ids, self.num_classes, labels) # 1000 or labels
+        return labels
+
+    def forward(self, labels, train, force_drop_ids=None):
+        use_dropout = self.dropout_prob > 0
+        if (train and use_dropout) or (force_drop_ids is not None):
+            labels = self.token_drop(labels, force_drop_ids)
+        embeddings = self.embedding_table(labels)
+        return embeddings
+
+    def get_in_channels(self):
+        return self.in_channels # 1001
+
+
+
+class FinalLayer(nn.Module):
+    """
+    The final layer of DiT.
+    """
+    def __init__(self, hidden_size, patch_size, out_channels):
+        super().__init__()
+        self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+        )
+
+    def forward(self, x, c):
+        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
+        x = modulate(self.norm_final(x), shift, scale)
+        x = self.linear(x)
+        return x
 
 
 class DiMBlock(nn.Module):
@@ -43,59 +203,85 @@ class DiMBlock(nn.Module):
         self.fused_add_norm = fused_add_norm
         self.mixer = mixer_cls(dim)
         self.norm = norm_cls(dim)
+        
+        # w/o FFN
+        # self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        # if self.fused_add_norm:
+        #     assert RMSNorm is not None, "RMSNorm import fails"
+        #     assert isinstance(
+        #         self.norm, (nn.LayerNorm, RMSNorm)
+        #     ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
+        # else:
+        #     self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
+
+        self.norm_2 = norm_cls(dim)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        if self.fused_add_norm:
-            assert RMSNorm is not None, "RMSNorm import fails"
-            assert isinstance(
-                self.norm, (nn.LayerNorm, RMSNorm)
-            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
-        else:
-            self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
+        
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim, bias=True))
+        mlp_hidden_dim = int(dim * 4)
+        approx_gelu = lambda: nn.GELU(approximate="tanh")
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
     def forward(
         self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None
-    ):
+    ):  
         r"""Pass the input through the encoder layer.
 
         Args:
             hidden_states: the sequence to the encoder layer (required).
             residual: hidden_states = Mixer(LN(residual))
+            c: (N, D)
         """
-        if not self.fused_add_norm:
-            if residual is None:
-                residual = hidden_states
-            else:
-                residual = residual + self.drop_path(hidden_states)
+        # if not self.fused_add_norm:
+        #     if residual is None:
+        #         residual = hidden_states
+        #     else:
+        #         residual = residual + self.drop_path(hidden_states)
 
-            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
-            if self.residual_in_fp32:
-                residual = residual.to(torch.float32)
+        #     hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+        #     if self.residual_in_fp32:
+        #         residual = residual.to(torch.float32)
 
-            shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
-            hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+        #     shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
+        #     hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+        # else:
+        #     fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+        #     if residual is None:
+        #         hidden_states, residual = fused_add_norm_fn(
+        #             hidden_states,
+        #             self.norm.weight,
+        #             self.norm.bias,
+        #             residual=residual,
+        #             prenorm=True,
+        #             residual_in_fp32=self.residual_in_fp32,
+        #             eps=self.norm.eps,
+        #         )
+        #     else:
+        #         hidden_states, residual = fused_add_norm_fn(
+        #             self.drop_path(hidden_states),
+        #             self.norm.weight,
+        #             self.norm.bias,
+        #             residual=residual,
+        #             prenorm=True,
+        #             residual_in_fp32=self.residual_in_fp32,
+        #             eps=self.norm.eps,
+        #         )    
+        #     hidden_states = self.mixer(hidden_states, inference_params=inference_params)
+        # return hidden_states, residual
+
+        if residual is None:
+            residual = hidden_states
         else:
-            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
-            if residual is None:
-                hidden_states, residual = fused_add_norm_fn(
-                    hidden_states,
-                    self.norm.weight,
-                    self.norm.bias,
-                    residual=residual,
-                    prenorm=True,
-                    residual_in_fp32=self.residual_in_fp32,
-                    eps=self.norm.eps,
-                )
-            else:
-                hidden_states, residual = fused_add_norm_fn(
-                    self.drop_path(hidden_states),
-                    self.norm.weight,
-                    self.norm.bias,
-                    residual=residual,
-                    prenorm=True,
-                    residual_in_fp32=self.residual_in_fp32,
-                    eps=self.norm.eps,
-                )    
-            hidden_states = self.mixer(hidden_states, inference_params=inference_params)
+            residual = residual + self.drop_path(hidden_states)
+
+        hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+        if self.residual_in_fp32:
+            residual = residual.to(torch.float32)
+
+        shift_ssm, scale_ssm, gate_ssm, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
+        hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+        hidden_states = hidden_states + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm_2(hidden_states), shift_mlp, scale_mlp))
+        
         return hidden_states, residual
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
@@ -104,11 +290,11 @@ class DiMBlock(nn.Module):
 
 class MoEBlock(nn.Module):
     def __init__(
-        self, 
-        dim, 
-        mixer_cls, 
-        norm_cls=nn.LayerNorm, 
-        fused_add_norm=False, 
+        self,
+        dim,
+        mixer_cls,
+        norm_cls=nn.LayerNorm,
+        fused_add_norm=False,
         residual_in_fp32=False
     ):
 
@@ -148,6 +334,57 @@ class MoEBlock(nn.Module):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
+    
+class DiMBlockRaw(nn.Module):
+    def __init__(
+        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False, drop_path=0.,
+    ):
+        """
+        Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
+
+        This Block has a slightly different structure compared to a regular
+        prenorm Transformer block.
+        The standard block is: LN -> MHA/MLP -> Add.
+        [Ref: https://arxiv.org/abs/2002.04745]
+        Here we have: Add -> LN -> Mixer, returning both
+        the hidden_states (output of the mixer) and the residual.
+        This is purely for performance reasons, as we can fuse add and LayerNorm.
+        The residual needs to be provided (except for the very first block).
+        """
+        super().__init__()
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.mixer = mixer_cls(dim)
+        self.norm = norm_cls(dim)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
+
+    def forward(
+        self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None
+    ):
+        r"""Pass the input through the encoder layer.
+
+        Args:
+            hidden_states: the sequence to the encoder layer (required).
+            residual: hidden_states = Mixer(LN(residual))
+        """
+        if residual is None:
+            residual = hidden_states
+        else:
+            residual = residual + self.drop_path(hidden_states)
+
+        hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+        if self.residual_in_fp32:
+            residual = residual.to(torch.float32)
+
+        shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
+        hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+        return hidden_states, residual
+
+    def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
+        return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
+
 
 class DiM(nn.Module):
     def __init__(
@@ -172,6 +409,8 @@ class DiM(nn.Module):
         gated_linear_unit=True,
         routing_mode='top1',
         is_moe=False,
+        pe_type = "ape",
+        block_type = "linear",
     ):
         super().__init__()
         self.depth = depth
@@ -181,6 +420,10 @@ class DiM(nn.Module):
         self.patch_size = patch_size
         self.num_classes = num_classes
         self.initializer_cfg = initializer_cfg
+        # using rotary embedding
+        self.pe_type = pe_type
+        # block type
+        self.block_type = block_type
 
         self.x_embedder = PatchEmbed(img_resolution, patch_size, in_channels, hidden_size)
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -188,6 +431,14 @@ class DiM(nn.Module):
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
+        
+        if self.pe_type == "rope":
+            # I'm not sure what pt_seq_len for
+            self.emb_sin, self.emb_cos = get_2d_sincos_rotary_embed(hidden_size, int(num_patches**0.5))
+            self.emb_sin = torch.from_numpy(self.emb_sin).to(dtype=torch.float32)
+            self.emb_cos = torch.from_numpy(self.emb_cos).to(dtype=torch.float32)
+        elif self.pe_type == "cpe":
+            self.pos_cnn = AdaInPosCNN(hidden_size, hidden_size)
 
         self.blocks = nn.ModuleList(
             [
@@ -207,6 +458,7 @@ class DiM(nn.Module):
                     gated_linear_unit=gated_linear_unit,
                     routing_mode=routing_mode,
                     is_moe=is_moe,
+                    block_type=block_type
                 )
                 for i in range(depth)
             ]
@@ -242,9 +494,8 @@ class DiM(nn.Module):
 
         # Zero-out adaLN modulation layers in DiT blocks:
         for block in self.blocks:
-            if isinstance(block, DiMBlock):
-                nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-                nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
         
         # mamba init
         self.apply(
@@ -283,21 +534,59 @@ class DiM(nn.Module):
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
+        if t is None:
+            # for compute Gflops
+            t = torch.randint(0, 1000, (x.shape[0],), device=x.device)
         if y is None:
             y = torch.ones(x.size(0), dtype=torch.long, device=x.device) * (self.y_embedder.get_in_channels() - 1)
-        x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
         t = self.t_embedder(t)  # (N, D)
         y = self.y_embedder(y, self.training)  # (N, D)
         c = t + y  # (N, D)
 
+        # add rope !
+        if self.pe_type == "ape":
+            x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        elif self.pe_type == "rope":
+            self.emb_cos = self.emb_cos.to(x.device)
+            self.emb_sin = self.emb_sin.to(x.device)
+            x = apply_rotary(self.x_embedder(x), self.emb_sin, self.emb_cos)
+        elif self.pe_type == "cpe":
+            x = self.x_embedder(x)
+            h = w = int(self.x_embedder.num_patches**0.5)
+            x = self.pos_cnn(x, c, H = h, W = w)
+        else:
+            raise("Unsupport PE")
+
+
+        # hidden_states = x
+        # for block in self.blocks:
+        #     if isinstance(block, DiMBlock):
+        #         hidden_states, residual = block(hidden_states, residual, c, inference_params=inference_params)  # (N, T, D)
+        #     else:
+        #         hidden_states, residual = block(hidden_states, residual, inference_params=inference_params)  # (N, T, D)
+
+        # please comment in/out if want to use ViM Pefeat
         residual = None
-        hidden_states = x
-        for block in self.blocks:
-            if isinstance(block, DiMBlock):
-                hidden_states, residual = block(hidden_states, residual, c, inference_params=inference_params)  # (N, T, D)
-            else:
-                hidden_states, residual = block(hidden_states, residual, inference_params=inference_params)  # (N, T, D)
-        x = self.final_layer(hidden_states, c)  # (N, T, patch_size ** 2 * out_channels)
+        for idx, block in enumerate(self.blocks):
+            if self.pe_type == "ape":
+                # PE + feature (Pefeat)
+                # if idx <= 5:
+                #     x = block(x, c, inference_params=None) + self.pos_embed  # (N, T, D)
+                # else:
+                #     x = block(x, c, inference_params=None)
+                # ViM raw
+                x, residual = block(x, residual, c, inference_params=inference_params)
+            elif self.pe_type == "rope":
+                # use RoPE
+                # x = block(apply_rotary(x, self.emb_sin, self.emb_cos), c, inference_params=None)
+                x, residual = block(x, residual, c, inference_params=inference_params)
+            elif self.pe_type == "cpe":
+                # if idx == 1:
+                #     h = w = int(self.x_embedder.num_patches**0.5)
+                #     x = self.pos_cnn(x, H = h, W = w)
+                x, residual = block(x, residual, c, inference_params=inference_params)
+
+        x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
         return x
 
@@ -377,6 +666,7 @@ def create_block(
     num_moe_experts:int=8,
     mamba_moe_layers:list=None,
     is_moe:bool=False,
+    block_type="linear",
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -386,14 +676,24 @@ def create_block(
     )
     if layer_idx % 2 == 0 or not is_moe:
         mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
-        block = DiMBlock(
-            d_model,
-            mixer_cls,
-            norm_cls=norm_cls,
-            drop_path=drop_path,
-            fused_add_norm=fused_add_norm,
-            residual_in_fp32=residual_in_fp32,
-        )
+        if block_type == "raw":
+            block = DiMBlockRaw(
+                d_model,
+                mixer_cls,
+                norm_cls=norm_cls,
+                drop_path=drop_path,
+                fused_add_norm=fused_add_norm,
+                residual_in_fp32=residual_in_fp32,
+            )
+        else:
+            block = DiMBlock(
+                d_model,
+                mixer_cls,
+                norm_cls=norm_cls,
+                drop_path=drop_path,
+                fused_add_norm=fused_add_norm,
+                residual_in_fp32=residual_in_fp32,
+            )
     else:
         mixer_cls = partial(SwitchMLP, 
             layer_idx=layer_idx, 
@@ -410,7 +710,6 @@ def create_block(
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
         )
-
     block.layer_idx = layer_idx
     return block
 
@@ -438,7 +737,7 @@ def DiM_L_2(**kwargs):
         ssm_cfg=None, 
         residual_in_fp32=True,
         **kwargs)
-
+    
 def DiM_B_2(**kwargs):
     return DiM(depth=12, 
         hidden_size=768, 

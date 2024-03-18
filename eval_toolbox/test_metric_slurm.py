@@ -37,7 +37,13 @@ echo "----------------------------"
 echo {gen_data}
 echo "----------------------------"
 
-CUDA_VISIBLE_DEVICES={device} python eval_toolbox/calc_metrics.py --metrics=fid50k_full,pr50k3_full --data={real_data} --mirror=1 --gen_data={gen_data} --img_resolution=256 --run_dir={slurm_output}
+python eval_toolbox/calc_metrics.py \
+    --metrics=fid{eval_mode}_full,pr{eval_mode}3_full \
+    --data={real_data} \
+    --mirror=1 \
+    --gen_data={gen_data} \
+    --img_resolution=256 \
+    --run_dir={slurm_output} \
 
 """
 
@@ -47,15 +53,16 @@ real_data = "/lustre/scratch/client/scratch/research/group/anhgroup/haopt12/real
 BASE_PORT = 18015
 num_gpus = 1
 device = "0,"
+eval_mode = ["10k", "50k"][0]
 
 config = pd.DataFrame({
-    "gen_data": ['samples/idimxl2_celeb256_gvp_difflog-DiM-XL-2/DiM-XL-2-0000200-cfg-1.0-100-SDE-250-Heun-log-Mean--1', 'samples/idimxl2_celeb256_gvp_difflog-DiM-XL-2/DiM-XL-2-0000200-cfg-1.0-100-ODE-250-dopri5', 'samples/idimxl2_celeb256_gvp_difflog-DiM-XL-2/DiM-XL-2-0000200-cfg-1.0-100-SDE-250-Euler-log-Mean--1'],
+    "gen_data": [f"samples/idiml2_linear_celeb256_gvp-DiM-L-2/DiM-L-2-0000200-cfg-1.0-100-ODE-250-dopri5"],
 })
 print(config)
 
 ###################################
-slurm_file_path = "/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurm_sample_scripts/{exp}/run.sh"
-slurm_output = "/lustre/scratch/client/vinai/users/haopt12/vimdiff/slurm_sample_scripts/{exp}/"
+slurm_file_path = "/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_sample_scripts/{exp}/run.sh"
+slurm_output = "/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_sample_scripts/{exp}/"
 os.makedirs(slurm_output, exist_ok=True)
 job_name = "test"
 
@@ -72,6 +79,7 @@ for idx, row in config.iterrows():
         num_gpus=num_gpus,
         device=device,
         master_port=str(BASE_PORT+idx),
+        eval_mode=eval_mode,
     )
     mode = "w" if idx == 0 else "a"
     with open(slurm_file_path, mode) as f:

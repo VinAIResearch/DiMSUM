@@ -14,6 +14,8 @@ def create_model(config):
             is_moe=config.is_moe,
             learn_sigma=config.learn_sigma,
             bimamba_type=config.bimamba_type,
+            pe_type=config.pe_type, 
+            block_type=config.block_type,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](

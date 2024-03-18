@@ -65,7 +65,7 @@ def main(args):
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt # or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=True)
     model.eval()  # important!
 
     diffusion = create_diffusion(str(args.num_sampling_steps), learn_sigma=args.learn_sigma)
@@ -76,12 +76,15 @@ def main(args):
     # Create folder to save samples:
     model_string_name = args.model.replace("/", "-")
     ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
-    folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
+    folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-" \
                   f"cfg-{args.cfg_scale}-seed-{args.global_seed}"
-    sample_folder_dir = f"{args.sample_dir}/{folder_name}"
+    exp_name = args.ckpt.split("/")[-3]
+    sample_folder_dir = f"{args.sample_dir}/{exp_name}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
         print(f"Saving .jpg samples at {sample_folder_dir}")
+        if args.eta is not None:
+            print("Using ddim sampler with eta = {}".format(args.eta))
     dist.barrier()
 
     # Figure out how many samples we need to generate on each GPU and how many iterations we need to run:
@@ -106,20 +109,18 @@ def main(args):
         y = None if not use_label else torch.randint(0, args.num_classes, (n,), device=device)
 
         # Setup classifier-free guidance:
-        if using_cfg:
-            z = torch.cat([z, z], 0)
-            y_null = torch.tensor([1000] * n, device=device)
-            y = torch.cat([y, y_null], 0)
-            model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
-            sample_fn = model.forward_with_cfg
-        else:
-            model_kwargs = dict(y=y)
-            sample_fn = model.forward
+        model_kwargs = dict(y=None)
+        sample_fn = model.forward
 
         # Sample images:
-        samples = diffusion.p_sample_loop(
-            sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
-        )
+        if args.eta is None:
+            samples = diffusion.p_sample_loop(
+                sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
+            )
+        else:
+            samples = diffusion.ddim_sample_loop(
+                sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device, eta = args.eta
+            )
         if using_cfg:
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
 
@@ -133,10 +134,10 @@ def main(args):
         total += global_batch_size
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
-    dist.barrier()
-    if rank == 0:
-        create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
-        print("Done.")
+    # dist.barrier()
+    # if rank == 0:
+    #     create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
+    #     print("Done.")
     dist.barrier()
     dist.destroy_process_group()
 
@@ -176,5 +177,8 @@ if __name__ == "__main__":
     group.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
     group.add_argument("--gated-linear-unit", action="store_true")
 
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
+    parser.add_argument("--eta",  type=float, default=None)
     args = parser.parse_args()
     main(args)

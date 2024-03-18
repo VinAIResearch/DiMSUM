@@ -6,8 +6,6 @@ sys.path.append("./vim")
 
 # from torchtoolbox.tools import summary
 from thop.profile import profile
-# from models_dim import DiM_models
-# from models_dmm import mamba_models
 from create_model import create_model
 
 
@@ -23,10 +21,12 @@ if __name__ == '__main__':
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--num-classes", type=int, default=-1)
-    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--label-dropout", type=float, default=-1)
     parser.add_argument("--learn-sigma", action='store_true', default=False)
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)
