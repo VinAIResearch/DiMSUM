@@ -1,9 +1,9 @@
 #!/bin/sh
-#SBATCH --job-name=uni # create a short name for your job
+#SBATCH --job-name=alod # create a short name for your job
 #SBATCH --output=/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurms/slurm_%A.out # create a output file
 #SBATCH --error=/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurms/slurm_%A.err # create a error file
 #SBATCH --partition=research # choose partition
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus-per-node=2
 #SBATCH --cpus-per-task=8 # 80
 #SBATCH --mem-per-gpu=32GB
 #SBATCH --nodes=1
@@ -19,6 +19,7 @@ set -e
 
 export MASTER_PORT=10122
 export WORLD_SIZE=1
+NUM_GPUs=2
 
 export SLURM_JOB_NODELIST=$(scontrol show hostnames $SLURM_JOB_NODELIST | tr '\n' ' ')
 export SLURM_NODELIST=$SLURM_JOB_NODELIST
@@ -33,14 +34,14 @@ echo "NODELIST="${SLURM_NODELIST}
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
-CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train_sit.py \
-        --exp idiml2_linear_celeb256_gvp \
+torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
+        --exp idiml2_gatedmlp_alterbiorders_celeb256_gvp \
         --model DiM-L/2 \
         --datadir ./vim/data/celeba-lmdb/ \
         --dataset celeba_256 \
         --num-classes 1 \
-        --global-batch-size 32 \
-        --epochs 600 \
+        --global-batch-size 64 \
+        --epochs 300 \
         --path-type GVP \
         --diffusion-form none \
         --lr 1e-4 \
@@ -49,7 +50,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT 
         --eval-nsamples 1_000 \
         --eval-bs 4 \
         --eval-refdir /lustre/scratch/client/scratch/research/group/anhgroup/haopt12/real_samples/celeba_256/ \
-        # --bimamba-type none \
+        --bimamba-type v2 \
         # --learn-sigma \
 #         # --model-ckpt results/diml2_moe_celeb256-DiM-L-2/checkpoints/0000100.pt \
 

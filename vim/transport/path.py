@@ -162,8 +162,8 @@ class ICPlan:
     
     def plan(self, t, x0, x1):
         perturbation = th.randn_like(x1)
-        xt = self.compute_xt(t, x0, x1) + self.compute_diffusion(x1, t, form=self.diffusion_form) * perturbation
-        ut = self.compute_ut(t, x0, x1, xt) + self.compute_d_diffusion(x1, t, form=self.diffusion_form) * perturbation
+        xt = self.compute_xt(t, x0, x1) # + self.compute_diffusion(x1, t, form=self.diffusion_form) * perturbation
+        ut = self.compute_ut(t, x0, x1, xt) # + self.compute_d_diffusion(x1, t, form=self.diffusion_form) * perturbation
         return t, xt, ut
     
 

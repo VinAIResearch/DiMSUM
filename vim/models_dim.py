@@ -20,9 +20,12 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
+from einops import rearrange
+
 from models_dit import FinalLayer, TimestepEmbedder, LabelEmbedder
 from models_dit import get_2d_sincos_pos_embed, modulate
 from switch_mlp import SwitchMLP
+from mlp import GatedMLP
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -184,7 +187,15 @@ class FinalLayer(nn.Module):
 
 class DiMBlock(nn.Module):
     def __init__(
-        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False, drop_path=0.,
+        self, 
+        dim, 
+        mixer_cls, 
+        norm_cls=nn.LayerNorm, 
+        fused_add_norm=False, 
+        residual_in_fp32=False, 
+        drop_path=0.,
+        reverse=False,
+        transpose=False,
     ):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
@@ -201,6 +212,8 @@ class DiMBlock(nn.Module):
         super().__init__()
         self.residual_in_fp32 = residual_in_fp32
         self.fused_add_norm = fused_add_norm
+        self.reverse = reverse
+        self.transpose = transpose
         self.mixer = mixer_cls(dim)
         self.norm = norm_cls(dim)
         
@@ -220,7 +233,7 @@ class DiMBlock(nn.Module):
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim, bias=True))
         mlp_hidden_dim = int(dim * 4)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        self.mlp = GatedMLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
     def forward(
         self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None
@@ -274,6 +287,16 @@ class DiMBlock(nn.Module):
         else:
             residual = residual + self.drop_path(hidden_states)
 
+        if self.transpose:
+            l = hidden_states.shape[1]
+            h = w = int(np.sqrt(l))
+            hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
+
+        if self.reverse:
+            hidden_states = hidden_states.flip(1)
+            residual = residual.flip(1)
+
         hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
         if self.residual_in_fp32:
             residual = residual.to(torch.float32)
@@ -281,6 +304,15 @@ class DiMBlock(nn.Module):
         shift_ssm, scale_ssm, gate_ssm, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
         hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
         hidden_states = hidden_states + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm_2(hidden_states), shift_mlp, scale_mlp))
+
+        # transform back
+        if self.reverse:
+            hidden_states = hidden_states.flip(1)
+            residual = residual.flip(1)
+
+        if self.transpose:
+            hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
         
         return hidden_states, residual
 
@@ -337,7 +369,15 @@ class MoEBlock(nn.Module):
     
 class DiMBlockRaw(nn.Module):
     def __init__(
-        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False, drop_path=0.,
+        self, 
+        dim, 
+        mixer_cls, 
+        norm_cls=nn.LayerNorm, 
+        fused_add_norm=False, 
+        residual_in_fp32=False, 
+        drop_path=0.,
+        reverse=False,
+        transpose=False,
     ):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
@@ -354,6 +394,8 @@ class DiMBlockRaw(nn.Module):
         super().__init__()
         self.residual_in_fp32 = residual_in_fp32
         self.fused_add_norm = fused_add_norm
+        self.reverse = reverse
+        self.transpose = transpose
         self.mixer = mixer_cls(dim)
         self.norm = norm_cls(dim)
 
@@ -374,12 +416,32 @@ class DiMBlockRaw(nn.Module):
         else:
             residual = residual + self.drop_path(hidden_states)
 
+        if self.transpose:
+            l = hidden_states.shape[1]
+            h = w = int(np.sqrt(l))
+            hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
+
+        if self.reverse:
+            hidden_states = hidden_states.flip(1)
+            residual = residual.flip(1)
+
         hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
         if self.residual_in_fp32:
             residual = residual.to(torch.float32)
 
         shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
         hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+
+        # transform back
+        if self.reverse:
+            hidden_states = hidden_states.flip(1)
+            residual = residual.flip(1)
+
+        if self.transpose:
+            hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
+
         return hidden_states, residual
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
@@ -413,7 +475,7 @@ class DiM(nn.Module):
         block_type = "linear",
     ):
         super().__init__()
-        self.depth = depth
+        self.depth = depth if block_type != "raw" else depth*2
         self.learn_sigma = learn_sigma
         self.in_channels = in_channels
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
@@ -458,9 +520,11 @@ class DiM(nn.Module):
                     gated_linear_unit=gated_linear_unit,
                     routing_mode=routing_mode,
                     is_moe=is_moe,
-                    block_type=block_type
+                    block_type=block_type,
+                    reverse=False, #not (bimamba_type =='v2') and (i % 2 > 0),
+                    transpose=(i % 2 > 0), #not (bimamba_type =='v2') and (i % 4 >= 2),
                 )
-                for i in range(depth)
+                for i in range(self.depth)
             ]
         )
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
@@ -667,6 +731,8 @@ def create_block(
     mamba_moe_layers:list=None,
     is_moe:bool=False,
     block_type="linear",
+    reverse=False,
+    transpose=False,
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -684,6 +750,8 @@ def create_block(
                 drop_path=drop_path,
                 fused_add_norm=fused_add_norm,
                 residual_in_fp32=residual_in_fp32,
+                reverse=reverse,
+                transpose=transpose,
             )
         else:
             block = DiMBlock(
@@ -693,6 +761,8 @@ def create_block(
                 drop_path=drop_path,
                 fused_add_norm=fused_add_norm,
                 residual_in_fp32=residual_in_fp32,
+                reverse=reverse,
+                transpose=transpose,
             )
     else:
         mixer_cls = partial(SwitchMLP, 
@@ -727,7 +797,7 @@ def DiM_XL_2(**kwargs):
         **kwargs)
 
 def DiM_L_2(**kwargs):
-    return DiM(depth=24, 
+    return DiM(depth=16, # 24
         hidden_size=1024, 
         patch_size=2, 
         # bimamba_type="v2", 

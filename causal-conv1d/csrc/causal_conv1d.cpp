@@ -227,11 +227,12 @@ causal_conv1d_fwd_cond(const at::Tensor &x, const at::Tensor &weight,
         CHECK_SHAPE(bias, dim);
     }
 
-    if (init_x.has_value()) {
-        at::Tensor out = init_x.value();
-    } else {
-        at::Tensor out = torch::empty_like(x);
-    }
+    // if (init_x.defined()) {
+    //     at::Tensor out = init_x.values();
+    // } else {
+    //     at::Tensor out = torch::empty_like(x);
+    // }
+    at::Tensor out = init_x;
 
     ConvParamsBase params;
     set_conv_params_fwd(params, batch_size, dim, seqlen, width, x, weight, out,

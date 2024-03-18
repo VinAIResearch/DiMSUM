@@ -162,7 +162,7 @@ def main(args):
     model = create_model(args) # mamba_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=True)
+    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
     transport = create_transport(
         args.path_type,
         args.prediction,
@@ -320,14 +320,13 @@ def main(args):
                 checkpoint_path = f"{checkpoint_dir}/{epoch:07d}.pt"
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
-            dist.barrier()
+            # dist.barrier()
 
         if rank == 0 and epoch % args.plot_every == 0:
             logger.info("Generating EMA samples...")
             with torch.no_grad():
                 sample_fn = transport_sampler.sample_ode() # default to ode sampling
                 samples = sample_fn(zs, model_fn, **sample_model_kwargs)[-1]
-                dist.barrier()
                 if use_cfg: #remove null samples
                     samples, _ = samples.chunk(2, dim=0)
                 samples = vae.decode(samples / 0.18215).sample
@@ -335,6 +334,7 @@ def main(args):
             # Save and display images:
             save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
             del samples
+        # dist.barrier()
 
         if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
             ref_dir = Path(args.eval_refdir)
@@ -469,7 +469,6 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
-    parser.add_argument("--lr", type=float, default=1e-4)
 
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])

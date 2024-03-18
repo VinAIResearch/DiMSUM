@@ -50,7 +50,7 @@ class Mamba(nn.Module):
         layer_idx=None,
         device=None,
         dtype=None,
-        bimamba_type="none"
+        bimamba_type="none",
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -120,36 +120,38 @@ class Mamba(nn.Module):
         self.D._no_weight_decay = True
 
         # bidirectional
-        assert bimamba_type == "v2"
+        if self.bimamba_type == 'v2':
+            A_b = repeat(
+                torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
+                "n -> d n",
+                d=self.d_inner,
+            ).contiguous()
+            A_b_log = torch.log(A_b)  # Keep A_b_log in fp32
+            self.A_b_log = nn.Parameter(A_b_log)
+            self.A_b_log._no_weight_decay = True 
 
-        A_b = repeat(
-            torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
-            "n -> d n",
-            d=self.d_inner,
-        ).contiguous()
-        A_b_log = torch.log(A_b)  # Keep A_b_log in fp32
-        self.A_b_log = nn.Parameter(A_b_log)
-        self.A_b_log._no_weight_decay = True 
+            self.conv1d_b = nn.Conv1d(
+                in_channels=self.d_inner,
+                out_channels=self.d_inner,
+                bias=conv_bias,
+                kernel_size=d_conv,
+                groups=self.d_inner,
+                padding=d_conv - 1,
+                **factory_kwargs,
+            )
 
-        self.conv1d_b = nn.Conv1d(
-            in_channels=self.d_inner,
-            out_channels=self.d_inner,
-            bias=conv_bias,
-            kernel_size=d_conv,
-            groups=self.d_inner,
-            padding=d_conv - 1,
-            **factory_kwargs,
-        )
+            self.x_proj_b = nn.Linear(
+                self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs
+            )
+            self.dt_proj_b = nn.Linear(self.dt_rank, self.d_inner, bias=True, **factory_kwargs)
 
-        self.x_proj_b = nn.Linear(
-            self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs
-        )
-        self.dt_proj_b = nn.Linear(self.dt_rank, self.d_inner, bias=True, **factory_kwargs)
-
-        self.D_b = nn.Parameter(torch.ones(self.d_inner, device=device))  # Keep in fp32
-        self.D_b._no_weight_decay = True
+            self.D_b = nn.Parameter(torch.ones(self.d_inner, device=device))  # Keep in fp32
+            self.D_b._no_weight_decay = True
+        else:
+            self.A_b_log, self.conv1d_b, self.x_proj_b, self.dt_proj_b, self.D_b, self.out_proj = [None]*6
 
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
+
 
     def forward(self, hidden_states, cond_emb=None, inference_params=None):
         """
@@ -157,6 +159,7 @@ class Mamba(nn.Module):
         Returns: same shape as hidden_states
         """
         batch, seqlen, dim = hidden_states.shape
+
 
         conv_state, ssm_state = None, None
         if inference_params is not None:
@@ -511,7 +514,7 @@ class CondMamba(nn.Module):
         self.D._no_weight_decay = True
 
         # bidirectional
-        assert bimamba_type == "v2"
+        # assert bimamba_type == "v2"
 
         A_b = repeat(
             torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
@@ -575,7 +578,7 @@ class CondMamba(nn.Module):
         if self.use_fast_path and inference_params is None:  # Doesn't support outputting the states
             if self.bimamba_type == "v2":
                 A_b = -torch.exp(self.A_b_log.float())
-                out = mamba_inner_fn_no_out_proj(
+                out = mamba_inner_fn_no_out_proj_cond(
                     xz,
                     self.conv1d.weight,
                     self.conv1d.bias,
@@ -588,7 +591,7 @@ class CondMamba(nn.Module):
                     delta_bias=self.dt_proj.bias.float(),
                     delta_softplus=True,
                 )
-                out_b = mamba_inner_fn_no_out_proj(
+                out_b = mamba_inner_fn_no_out_proj_cond(
                     xz.flip([-1]),
                     self.conv1d_b.weight,
                     self.conv1d_b.bias,

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Union
 import torch
+from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 from bias_gelu import bias_gelu_impl
@@ -51,8 +52,9 @@ class GatedMLP(nn.Module):
     def __init__(
         self,
         in_features: int,
-        hidden_features: Optional[int] = None,
-        out_features: Optional[int] = None,
+        hidden_features:int= None,
+        out_features:int= None,
+        act_layer=F.gelu,
         drop: float = 0.0,
         bias: bool = True,
     ) -> None:
@@ -61,7 +63,7 @@ class GatedMLP(nn.Module):
         hidden_features = hidden_features or in_features
         self.w12 = nn.Linear(in_features, 2 * hidden_features, bias=bias)
         self.w3 = nn.Linear(hidden_features, out_features, bias=bias)
-        self.act_layer = F.gelu
+        self.act_layer = act_layer()
 
     def forward(self, x: Tensor) -> Tensor:
         x12 = self.w12(x)
