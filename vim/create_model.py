@@ -16,6 +16,7 @@ def create_model(config):
             bimamba_type=config.bimamba_type,
             pe_type=config.pe_type, 
             block_type=config.block_type,
+            cond_mamba=config.cond_mamba,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](

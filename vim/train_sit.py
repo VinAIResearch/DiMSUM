@@ -13,6 +13,7 @@ import math
 import sys
 from pathlib import Path
 import gc
+import shutil
 
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
@@ -144,7 +145,7 @@ def main(args):
     # Setup an experiment folder:
     experiment_index = args.exp
     model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-    experiment_dir = f"{args.results_dir}/{experiment_index}-{model_string_name}"  # Create an experiment folder
+    experiment_dir = f"{args.results_dir}/{experiment_index}"  # Create an experiment folder 
     checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
     sample_dir = f"{experiment_dir}/samples"
     if rank == 0:
@@ -172,7 +173,7 @@ def main(args):
         path_args={"diffusion_form": args.diffusion_form},
     )  # default: velocity; 
     transport_sampler = Sampler(transport)
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"../stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"iDiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
@@ -352,6 +353,8 @@ def main(args):
                 pbar = tqdm(pbar) if rank == 0 else pbar
                 total = 0
                 p = Path(experiment_dir) / f"fid{args.eval_nsamples}"
+                if p.exists():
+                    shutil.rmtree(p.as_posix())
                 p.mkdir(exist_ok=True, parents=True)
                 model.eval()
                 for _ in pbar:
@@ -422,7 +425,7 @@ def main(args):
                                                     gen_dataset_kwargs=eval_args.gen_dataset_kwargs,
                                                     cache=True)
                 if rank == 0:
-                    metric_main.report_metric(result_dict, run_dir=p.as_posix(), snapshot_pkl=p.as_posix())
+                    metric_main.report_metric(result_dict, run_dir=experiment_dir, snapshot_pkl=p.as_posix())
                 del result_dict, samples
                 gc.collect()
                 torch.cuda.empty_cache()
@@ -469,6 +472,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--cond-mamba", action="store_true")
 
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])

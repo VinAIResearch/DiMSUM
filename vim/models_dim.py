@@ -10,7 +10,7 @@ from timm.models.vision_transformer import Attention, Mlp, PatchEmbed
 
 from functools import partial
 
-from mamba_ssm.modules.mamba_simple import Mamba
+from mamba_ssm.modules.mamba_simple import Mamba, CondMamba
 from rope import *
 from pe.my_rotary import get_2d_sincos_rotary_embed, apply_rotary
 from pe.cpe import PosCNN, AdaInPosCNN
@@ -302,7 +302,8 @@ class DiMBlock(nn.Module):
             residual = residual.to(torch.float32)
 
         shift_ssm, scale_ssm, gate_ssm, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-        hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+        # hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+        hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), c, inference_params=inference_params)
         hidden_states = hidden_states + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm_2(hidden_states), shift_mlp, scale_mlp))
 
         # transform back
@@ -473,6 +474,7 @@ class DiM(nn.Module):
         is_moe=False,
         pe_type = "ape",
         block_type = "linear",
+        cond_mamba=False,
     ):
         super().__init__()
         self.depth = depth if block_type != "raw" else depth*2
@@ -521,8 +523,13 @@ class DiM(nn.Module):
                     routing_mode=routing_mode,
                     is_moe=is_moe,
                     block_type=block_type,
-                    reverse=False, #not (bimamba_type =='v2') and (i % 2 > 0),
-                    transpose=(i % 2 > 0), #not (bimamba_type =='v2') and (i % 4 >= 2),
+                    # # alternate biorders (each ssm handle two orders), note: bimamba_type == 'v2'
+                    # reverse=False, 
+                    # transpose=(i % 2 > 0),
+                    # alternate orders (each ssm handle one order)
+                    reverse=not (bimamba_type =='v2') and (i % 2 > 0),
+                    transpose=not (bimamba_type =='v2') and (i % 4 >= 2),
+                    cond_mamba=cond_mamba,
                 )
                 for i in range(self.depth)
             ]
@@ -733,6 +740,7 @@ def create_block(
     block_type="linear",
     reverse=False,
     transpose=False,
+    cond_mamba=False, # conditional mode
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -741,7 +749,10 @@ def create_block(
         nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
     if layer_idx % 2 == 0 or not is_moe:
-        mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
+        if cond_mamba:
+            mixer_cls = partial(CondMamba, layer_idx=layer_idx, bimamba_type=bimamba_type, d_cond=d_model, **ssm_cfg, **factory_kwargs)
+        else:
+            mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
         if block_type == "raw":
             block = DiMBlockRaw(
                 d_model,
