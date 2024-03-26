@@ -349,6 +349,7 @@ class FourierBlock(nn.Module):
         length,
         norm_cls=nn.LayerNorm,
     ):
+        super().__init__()
         self.dim = dim
         self.norm = norm_cls(dim)
         self.act = nn.SiLU()
@@ -359,7 +360,7 @@ class FourierBlock(nn.Module):
         self.weight2 = nn.Parameter(torch.randn((1, length, dim), dtype=torch.float32)*scale)
         self.bias2 = nn.Parameter(torch.randn((1, length, dim), dtype=torch.float32)*scale)
     
-    def __forward__(self, x):
+    def forward(self, x):
         x = self.norm(x)
         h = dct.dct(x)
         h = self.act(self.weight * h + self.bias)
@@ -610,7 +611,7 @@ class DiM(nn.Module):
                 [
                     FourierBlock(
                         hidden_size,
-                        length=img_resolution**2,
+                        length=(img_resolution//patch_size)**2,
                     )
                     for i in range(self.depth) 
                 ]

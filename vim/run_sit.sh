@@ -19,9 +19,9 @@ set -e
 
 # export NCCL_SOCKET_IFNAME=bond0
 export NCCL_SOCKET_IFNAME=^docker0,lo
-export MASTER_PORT=10128
+export MASTER_PORT=10129
 export WORLD_SIZE=2
-NUM_GPUs=2
+NUM_GPUs=1
 
 SLURM_JOB_NODELIST=$(scontrol show hostnames $SLURM_JOB_NODELIST | tr '\n' ' ')
 SLURM_NODELIST=$SLURM_JOB_NODELIST
@@ -42,7 +42,7 @@ torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_G
         --datadir ../data/celeba_256/celeba-lmdb/ \
         --dataset celeba_256 \
         --num-classes 1 \
-        --global-batch-size 64 \
+        --global-batch-size 32 \
         --epochs 300 \
         --path-type GVP \
         --diffusion-form none \
