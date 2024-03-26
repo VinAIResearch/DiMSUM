@@ -348,7 +348,7 @@ class FourierBlock(nn.Module):
         dim,
         length,
         norm_cls=nn.LayerNorm,
-    )
+    ):
         self.dim = dim
         self.norm = norm_cls(dim)
         self.act = nn.SiLU()
@@ -542,6 +542,7 @@ class DiM(nn.Module):
         block_type = "linear",
         cond_mamba=False,
         scanning_continuity=False,
+        enable_fourier_layers=False,
     ):
         super().__init__()
         self.depth = depth if block_type != "raw" else depth*2
@@ -551,6 +552,7 @@ class DiM(nn.Module):
         self.patch_size = patch_size
         self.num_classes = num_classes
         self.initializer_cfg = initializer_cfg
+        self.enable_fourier_layers = enable_fourier_layers
         # using rotary embedding
         self.pe_type = pe_type
         # block type
@@ -602,6 +604,18 @@ class DiM(nn.Module):
                 for i in range(self.depth)
             ]
         )
+
+        if enable_fourier_layers:
+            self.fourier_blocks = nn.ModuleList(
+                [
+                    FourierBlock(
+                        hidden_size,
+                        length=img_resolution**2,
+                    )
+                    for i in range(self.depth) 
+                ]
+            )
+
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
 
@@ -707,6 +721,8 @@ class DiM(nn.Module):
         # please comment in/out if want to use ViM Pefeat
         residual = None
         for idx, block in enumerate(self.blocks):
+            if self.enable_fourier_layers:
+                x = self.fourier_blocks[idx](x)
             if self.pe_type == "ape":
                 # PE + feature (Pefeat)
                 # if idx <= 5:

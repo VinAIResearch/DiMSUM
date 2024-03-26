@@ -36,51 +36,52 @@ echo "NODELIST="${SLURM_NODELIST}
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
-# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-#         --exp idiml2_gatedmlp_alterorders_celeb256_linear_condmamba_logitnormal_-0.5_1 \
-#         --model DiM-L/2 \
-#         --datadir ../data/celeba_256/celeba-lmdb/ \
-#         --dataset celeba_256 \
-#         --num-classes 1 \
-#         --global-batch-size 64 \
-#         --epochs 300 \
-#         --path-type Linear \
-#         --diffusion-form none \
-#         --lr 1e-4 \
-#         --block-type linear \
-#         --eval-every 50 \
-#         --eval-nsamples 2_000 \
-#         --eval-bs 4 \
-#         --eval-refdir real_samples/celeba_256/ \
-#         --bimamba-type none \
-#         --t-sample-mode logitnormal \
-#         --cond-mamba \
-#         # --scanning-continuity \
-#         # --model-ckpt results/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/checkpoints/0000025.pt \
-
-
 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-        --exp idiml2_gatedmlp_alterorders_imnet256_10percent_GVP_condmamba \
+        --exp idiml2_gatedmlp_alterorders_celeb256_GVP_condmamba_fourierblk \
         --model DiM-L/2 \
-        --datadir ../data/imagenet1k_10percent_simclrv2 \
-        --dataset imagenet_256 \
-        --num-classes 1_000 \
+        --datadir ../data/celeba_256/celeba-lmdb/ \
+        --dataset celeba_256 \
+        --num-classes 1 \
         --global-batch-size 64 \
-        --epochs 1_000 \
+        --epochs 300 \
         --path-type GVP \
         --diffusion-form none \
         --lr 1e-4 \
         --block-type linear \
-        --eval-every 25 \
+        --bimamba-type none \
+        --cond-mamba \
+        --eval-every 50 \
         --eval-nsamples 2_000 \
         --eval-bs 4 \
-        --eval-refdir ./real_samples/imagenet1k_10percent_simclrv2_256_samples \
-        --bimamba-type none \
-        --label-dropout 0.15 \
-        --cond-mamba \
+        --eval-refdir real_samples/celeba_256/ \
+        --enable-fourier-layers \
         # --t-sample-mode logitnormal \
         # --scanning-continuity \
         # --model-ckpt results/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/checkpoints/0000025.pt \
+
+
+# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
+#         --exp idiml2_gatedmlp_alterorders_imnet256_10percent_GVP_condmamba \
+#         --model DiM-L/2 \
+#         --datadir ../data/imagenet1k_10percent_simclrv2 \
+#         --dataset imagenet_256 \
+#         --num-classes 1_000 \
+#         --global-batch-size 64 \
+#         --epochs 1_000 \
+#         --path-type GVP \
+#         --diffusion-form none \
+#         --lr 1e-4 \
+#         --block-type linear \
+#         --eval-every 25 \
+#         --eval-nsamples 2_000 \
+#         --eval-bs 4 \
+#         --eval-refdir ./real_samples/imagenet1k_10percent_simclrv2_256_samples \
+#         --bimamba-type none \
+#         --label-dropout 0.15 \
+#         --cond-mamba \
+#         # --t-sample-mode logitnormal \
+#         # --scanning-continuity \
+#         # --model-ckpt results/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/checkpoints/0000025.pt \
 
 
 # CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/train_sit.py \

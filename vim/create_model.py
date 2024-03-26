@@ -18,6 +18,7 @@ def create_model(config):
             block_type=config.block_type,
             cond_mamba=config.cond_mamba,
             scanning_continuity=config.scanning_continuity,
+            enable_fourier_layers=config.enable_fourier_layers,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](
