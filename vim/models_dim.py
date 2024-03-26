@@ -21,6 +21,7 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 from einops import rearrange
+import torch_dct as dct
 
 from models_dit import FinalLayer, TimestepEmbedder, LabelEmbedder
 from models_dit import get_2d_sincos_pos_embed, modulate
@@ -339,6 +340,32 @@ class DiMBlock(nn.Module):
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
+
+
+class FourierBlock(nn.Module):
+    def __init__(
+        self,
+        dim,
+        length,
+        norm_cls=nn.LayerNorm,
+    )
+        self.dim = dim
+        self.norm = norm_cls(dim)
+        self.act = nn.SiLU()
+        scale = 0.02
+        self.weight = nn.Parameter(torch.randn((1, length, dim), dtype=torch.float32)*scale)
+        self.bias = nn.Parameter(torch.randn((1, length, dim), dtype=torch.float32)*scale)
+
+        self.weight2 = nn.Parameter(torch.randn((1, length, dim), dtype=torch.float32)*scale)
+        self.bias2 = nn.Parameter(torch.randn((1, length, dim), dtype=torch.float32)*scale)
+    
+    def __forward__(self, x):
+        x = self.norm(x)
+        h = dct.dct(x)
+        h = self.act(self.weight * h + self.bias)
+        h = self.weight2 * h + self.bias2
+        x = dct.idct(h)
+        return x
 
 
 class MoEBlock(nn.Module):
