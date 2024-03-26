@@ -47,6 +47,7 @@ class Transport:
         train_eps,
         sample_eps,
         path_args={},
+        t_sample_mode="uniform",
     ):
         path_options = {
             PathType.LINEAR: path.ICPlan,
@@ -59,6 +60,7 @@ class Transport:
         self.path_sampler = path_options[path_type](**path_args)
         self.train_eps = train_eps
         self.sample_eps = sample_eps
+        self.t_sample_mode = t_sample_mode
 
     def prior_logp(self, z):
         '''
@@ -109,7 +111,13 @@ class Transport:
         
         x0 = th.randn_like(x1)
         t0, t1 = self.check_interval(self.train_eps, self.sample_eps)
-        t = th.rand((x1.shape[0],)) * (t1 - t0) + t0
+        if self.t_sample_mode == 'logitnormal':
+            # t = th.randn((x1.shape[0],))
+            a, b = -0.5, 1
+            t = b * th.randn((x1.shape[0],)) + a
+            t = th.sigmoid(t) * (t1 - t0) + t0
+        else:
+            t = th.rand((x1.shape[0],)) * (t1 - t0) + t0
         t = t.to(x1)
         return t, x0, x1
     

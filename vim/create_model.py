@@ -17,6 +17,7 @@ def create_model(config):
             pe_type=config.pe_type, 
             block_type=config.block_type,
             cond_mamba=config.cond_mamba,
+            scanning_continuity=config.scanning_continuity,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](

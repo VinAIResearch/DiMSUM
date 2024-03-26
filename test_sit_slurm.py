@@ -12,7 +12,7 @@ slurm_template = """#!/bin/bash -e
 #SBATCH --gpus={num_gpus}
 #SBATCH --nodes=1
 #SBATCH --mem-per-gpu=36G
-#SBATCH --cpus-per-gpu=16
+#SBATCH --cpus-per-gpu=8
 #SBATCH --partition=research
 #SBATCH --mail-type=all
 #SBATCH --mail-user=v.haopt12@vinai.io
@@ -43,7 +43,7 @@ echo "----------------------------"
 
 CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node={num_gpus} vim/sample_sit_ddp.py {sampler} \
     --model $MODEL_TYPE \
-    --per-proc-batch-size 100 \
+    --per-proc-batch-size 128 \
     --image-size 256 \
     --ckpt {ckpt_root}/{epoch:07d}.pt \
     --num-fid-samples 50_000 \
@@ -54,6 +54,11 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --diffusion-form {diff_form} \
     --sample-dir samples/{exp} \
     --block-type linear \
+    --bimamba-type none \
+    --eval-refdir {eval_refdir} \
+    --eval-metric {eval_metric} \
+    # --cond-mamba \
+    # --scanning-continuity \
 
 
 # CUDA_VISIBLE_DEVICES=0 python eval_toolbox/calc_metrics.py \
@@ -62,24 +67,27 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
 #     --mirror=1 
 #     --gen_data=samples/{exp}/
 #     --img_resolution=256
+#     --run_dir={slurm_output}
 
 """
 
 ###### ARGS
-model_type = "DiM-XL/2" # or "DiT-L/2" or "adm"
-exp = "idimxl2_celeb256_gvp_difflog-DiM-XL-2"
+model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
+exp = "idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample"
 ckpt_root = f"results/{exp}/checkpoints/"
-BASE_PORT = 18017
+real_data = "real_samples/celeba_256"
+eval_metric = "fid{num_samples}k_full,pr{num_samples}k3_full".format(num_samples="50")
+BASE_PORT = 18019
 num_gpus = 2
 device = "0,1"
 
 config = pd.DataFrame({
-    "epochs": [200]*3,
-    "num_steps": [250]*3,
-    "methods": ['dopri5', 'Euler', 'Euler'],
-    "cfg_scale": [1.]*3,
-    "diff_form": ["none", "increasing-decreasing", "log"],
-    "sampler": ['ODE', 'SDE', 'SDE']
+    "epochs": [225],
+    "num_steps": [250],
+    "methods": ['dopri5'],
+    "cfg_scale": [1.],
+    "diff_form": ["none"],
+    "sampler": ['ODE'],
 })
 print(config)
 
@@ -110,10 +118,11 @@ for idx, row in config.iterrows():
         sampler=row.sampler,
         real_data=real_data,
         ckpt_root=ckpt_root,
-        sampler=row.sampler,
+        eval_refdir=real_data,
+        eval_metric=eval_metric,
     )
-    # mode = "w" if idx == 0 else "a"
-    mode = "a"
+    mode = "w" if idx == 0 else "a"
+    # mode = "a"
     with open(slurm_file_path, mode) as f:
         f.write(slurm_command)
 print("Slurm script is saved at", slurm_file_path)

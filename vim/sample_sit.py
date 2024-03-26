@@ -143,6 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--cond-mamba", action="store_true")
+    parser.add_argument("--scanning-continuity", action="store_true")
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)

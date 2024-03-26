@@ -134,13 +134,19 @@ def main(args):
 
     # Setup DDP:
     dist.init_process_group("nccl")
-    assert args.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
+    # if "SLURM_PROCID" in os.environ:
+    #     rank = int(os.environ["SLURM_PROCID"])
+    #     gpu = rank % torch.cuda.device_count()
+    #     world_size = int(os.environ["WORLD_SIZE"], 1)
+    # else:
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
-    seed = args.global_seed * dist.get_world_size() + rank
+    world_size = dist.get_world_size()
+    assert args.global_batch_size % world_size == 0, f"Batch size must be divisible by world size."
+    seed = args.global_seed * world_size + rank
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
-    print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
+    print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
 
     # Setup an experiment folder:
     experiment_index = args.exp
@@ -171,6 +177,7 @@ def main(args):
         args.train_eps,
         args.sample_eps,
         path_args={"diffusion_form": args.diffusion_form},
+        t_sample_mode=args.t_sample_mode,
     )  # default: velocity; 
     transport_sampler = Sampler(transport)
     vae = AutoencoderKL.from_pretrained(f"../stabilityai/sd-vae-ft-{args.vae}").to(device)
@@ -180,7 +187,18 @@ def main(args):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-5, verbose=True)
 
-    if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
+    if args.model_ckpt and os.path.exists(args.model_ckpt):
+        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
+        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
+        init_epoch = epoch
+        model.module.load_state_dict(checkpoint["model"])
+        ema.load_state_dict(checkpoint["ema"])
+        opt.load_state_dict(checkpoint["opt"])
+        train_steps = 0
+
+        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
+        del checkpoint
+    elif args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
         checkpoint = torch.load(checkpoint_file, map_location=torch.device(f'cuda:{device}'))
         init_epoch = checkpoint["epoch"]
@@ -192,18 +210,6 @@ def main(args):
 
         logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
         del checkpoint
-
-    elif args.model_ckpt and os.path.exists(args.model_ckpt):
-        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
-        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
-        init_epoch = epoch
-        model.module.load_state_dict(checkpoint["model"])
-        ema.load_state_dict(checkpoint["ema"])
-        opt.load_state_dict(checkpoint["opt"])
-        train_steps = 0
-
-        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
-        del checkpoint
     else:
         init_epoch = 0
         train_steps = 0
@@ -212,14 +218,14 @@ def main(args):
     dataset = get_dataset(args)
     sampler = DistributedSampler(
         dataset,
-        num_replicas=dist.get_world_size(),
+        num_replicas=world_size,
         rank=rank,
         shuffle=True,
         seed=args.global_seed
     )
     loader = DataLoader(
         dataset,
-        batch_size=int(args.global_batch_size // dist.get_world_size()),
+        batch_size=int(args.global_batch_size // world_size),
         shuffle=False,
         sampler=sampler,
         num_workers=args.num_workers,
@@ -285,7 +291,7 @@ def main(args):
                 # Reduce loss history over all processes:
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
-                avg_loss = avg_loss.item() / dist.get_world_size()
+                avg_loss = avg_loss.item() / world_size
                 logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
                 # Reset monitoring variables:
                 running_loss = 0
@@ -342,19 +348,19 @@ def main(args):
             if ref_dir.exists():
                 n = args.eval_bs
                 using_cfg = args.eval_cfg_scale > 1.0
-                global_batch_size = n * dist.get_world_size()
+                global_batch_size = n * world_size
                 total_samples = int(
                     math.ceil(args.eval_nsamples / global_batch_size)
                     * global_batch_size
                 )
-                samples_needed_this_gpu = int(total_samples // dist.get_world_size())
+                samples_needed_this_gpu = int(total_samples // world_size)
                 iterations = int(samples_needed_this_gpu // n)
                 pbar = range(iterations)
                 pbar = tqdm(pbar) if rank == 0 else pbar
                 total = 0
-                p = Path(experiment_dir) / f"fid{args.eval_nsamples}"
-                if p.exists():
-                    shutil.rmtree(p.as_posix())
+                p = Path(experiment_dir) / f"fid{args.eval_nsamples}_epoch{epoch}"
+                # if p.exists() and rank == 0:
+                #     shutil.rmtree(p.as_posix())
                 p.mkdir(exist_ok=True, parents=True)
                 model.eval()
                 for _ in pbar:
@@ -369,10 +375,10 @@ def main(args):
                         y_null = torch.tensor([args.num_classes] * n, device=device)
                         y = torch.cat([y, y_null], 0)
                         sample_model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
-                        model_eval_fn = model.forward_with_cfg
+                        model_eval_fn = ema.forward_with_cfg # model.forward_with_cfg
                     else:
                         sample_model_kwargs = dict(y=y)
-                        model_eval_fn = model.forward
+                        model_eval_fn = ema.forward # model.forward
 
                     # Sample images:
                     with torch.no_grad():
@@ -394,7 +400,7 @@ def main(args):
 
                     # Save samples to disk as individual .png files
                     for i, sample in enumerate(samples):
-                        index = i * dist.get_world_size() + rank + total
+                        index = i * world_size + rank + total
                         if index >= args.eval_nsamples:
                             break
                         pp = p / f"{index:06d}.jpg"
@@ -418,7 +424,7 @@ def main(args):
                     print("Calculating FID...")
                 result_dict = metric_main.calc_metric(metric="fid2k_full", 
                                                     dataset_kwargs=eval_args.dataset_kwargs,
-                                                    num_gpus=dist.get_world_size(),
+                                                    num_gpus=world_size,
                                                     rank=rank, 
                                                     device=device,
                                                     progress=progress,
@@ -473,12 +479,12 @@ if __name__ == "__main__":
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
     parser.add_argument("--cond-mamba", action="store_true")
+    parser.add_argument("--scanning-continuity", action="store_true")
 
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
-
 
     group = parser.add_argument_group("Eval")
     group.add_argument("--eval-every", type=int, default=100)
@@ -503,6 +509,7 @@ if __name__ == "__main__":
     group.add_argument("--diffusion-form", type=str, default="none", \
                             choices=["none", "constant", "SBDM", "sigma", "linear", "decreasing", "increasing-decreasing", "log"],\
                             help="form of diffusion coefficient in the SDE")
+    group.add_argument("--t-sample-mode", type=str, default="uniform")
 
     args = parser.parse_args()
     main(args)

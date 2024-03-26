@@ -1,6 +1,7 @@
 import os
 import time
 import subprocess
+from glob import glob
 
 import numpy as np
 import pandas as pd
@@ -48,15 +49,16 @@ python eval_toolbox/calc_metrics.py \
 """
 
 ###### ARGS
-real_data = "/lustre/scratch/client/scratch/research/group/anhgroup/haopt12/real_samples/celeba_256/"
+real_data = "real_samples/celeba_256/"
 
 BASE_PORT = 18015
 num_gpus = 1
 device = "0,"
-eval_mode = ["10k", "50k"][0]
+eval_mode = ["10k", "50k"][1]
 
+# 
 config = pd.DataFrame({
-    "gen_data": [f"samples/idiml2_linear_celeb256_gvp-DiM-L-2/DiM-L-2-0000200-cfg-1.0-100-ODE-250-dopri5"],
+    "gen_data": ["samples/idiml2_gatedmlp_alterorders_celeb256_linear_logitnormal/DiM-L-2-0000225-cfg-1.0-128-ODE-250-dopri5",], # list(sorted(glob("samples/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/*/"))),
 })
 print(config)
 

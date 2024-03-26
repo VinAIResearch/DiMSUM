@@ -196,6 +196,7 @@ class DiMBlock(nn.Module):
         drop_path=0.,
         reverse=False,
         transpose=False,
+        scanning_continuity=False,
     ):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
@@ -214,6 +215,8 @@ class DiMBlock(nn.Module):
         self.fused_add_norm = fused_add_norm
         self.reverse = reverse
         self.transpose = transpose
+        self.scanning_continuity = scanning_continuity
+
         self.mixer = mixer_cls(dim)
         self.norm = norm_cls(dim)
         
@@ -234,6 +237,7 @@ class DiMBlock(nn.Module):
         mlp_hidden_dim = int(dim * 4)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
         self.mlp = GatedMLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        # self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
     def forward(
         self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None
@@ -287,11 +291,19 @@ class DiMBlock(nn.Module):
         else:
             residual = residual + self.drop_path(hidden_states)
 
+        l = hidden_states.shape[1]
+        h = w = int(np.sqrt(l))
         if self.transpose:
-            l = hidden_states.shape[1]
-            h = w = int(np.sqrt(l))
             hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
             residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
+
+        if self.scanning_continuity:
+            hidden_states = rearrange(hidden_states.clone(), 'n (w h) c -> n c w h', h=h, w=w)
+            residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
+            hidden_states[:, :, 1::2] = hidden_states[:, :, 1::2].flip(-1)
+            residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
+            hidden_states = rearrange(hidden_states, 'n c w h -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)   
 
         if self.reverse:
             hidden_states = hidden_states.flip(1)
@@ -310,6 +322,14 @@ class DiMBlock(nn.Module):
         if self.reverse:
             hidden_states = hidden_states.flip(1)
             residual = residual.flip(1)
+
+        if self.scanning_continuity:
+            hidden_states = rearrange(hidden_states.clone(), 'n (w h) c -> n c w h', h=h, w=w)
+            residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
+            hidden_states[:, :, 1::2] = hidden_states[:, :, 1::2].flip(-1)
+            residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
+            hidden_states = rearrange(hidden_states, 'n c w h -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)
 
         if self.transpose:
             hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
@@ -379,6 +399,7 @@ class DiMBlockRaw(nn.Module):
         drop_path=0.,
         reverse=False,
         transpose=False,
+        scanning_continuity=False,
     ):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
@@ -397,6 +418,8 @@ class DiMBlockRaw(nn.Module):
         self.fused_add_norm = fused_add_norm
         self.reverse = reverse
         self.transpose = transpose
+        self.scanning_continuity = scanning_continuity
+
         self.mixer = mixer_cls(dim)
         self.norm = norm_cls(dim)
 
@@ -423,6 +446,14 @@ class DiMBlockRaw(nn.Module):
             hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
             residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
 
+        if self.scanning_continuity:
+            hidden_states = rearrange(hidden_states.clone(), 'n (w h) c -> n c w h', h=h, w=w)
+            residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
+            hidden_states[:, :, 1::2] = hidden_states[:, :, 1::2].flip(-1)
+            residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
+            hidden_states = rearrange(hidden_states, 'n c w h -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)   
+
         if self.reverse:
             hidden_states = hidden_states.flip(1)
             residual = residual.flip(1)
@@ -438,6 +469,14 @@ class DiMBlockRaw(nn.Module):
         if self.reverse:
             hidden_states = hidden_states.flip(1)
             residual = residual.flip(1)
+
+        if self.scanning_continuity:
+            hidden_states = rearrange(hidden_states.clone(), 'n (w h) c -> n c w h', h=h, w=w)
+            residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
+            hidden_states[:, :, 1::2] = hidden_states[:, :, 1::2].flip(-1)
+            residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
+            hidden_states = rearrange(hidden_states, 'n c w h -> n (w h) c', h=h, w=w)
+            residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)   
 
         if self.transpose:
             hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
@@ -475,6 +514,7 @@ class DiM(nn.Module):
         pe_type = "ape",
         block_type = "linear",
         cond_mamba=False,
+        scanning_continuity=False,
     ):
         super().__init__()
         self.depth = depth if block_type != "raw" else depth*2
@@ -530,6 +570,7 @@ class DiM(nn.Module):
                     reverse=not (bimamba_type =='v2') and (i % 2 > 0),
                     transpose=not (bimamba_type =='v2') and (i % 4 >= 2),
                     cond_mamba=cond_mamba,
+                    scanning_continuity=scanning_continuity,
                 )
                 for i in range(self.depth)
             ]
@@ -741,6 +782,7 @@ def create_block(
     reverse=False,
     transpose=False,
     cond_mamba=False, # conditional mode
+    scanning_continuity=False,
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -763,6 +805,7 @@ def create_block(
                 residual_in_fp32=residual_in_fp32,
                 reverse=reverse,
                 transpose=transpose,
+                scanning_continuity=scanning_continuity,
             )
         else:
             block = DiMBlock(
@@ -774,6 +817,7 @@ def create_block(
                 residual_in_fp32=residual_in_fp32,
                 reverse=reverse,
                 transpose=transpose,
+                scanning_continuity=scanning_continuity,
             )
     else:
         mixer_cls = partial(SwitchMLP, 

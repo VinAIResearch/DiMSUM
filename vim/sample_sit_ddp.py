@@ -22,6 +22,13 @@ import math
 import argparse
 import sys
 
+import gc
+from pathlib import Path
+eval_import_path = (Path(__file__).parent.parent / "eval_toolbox").resolve().as_posix()
+sys.path.append(eval_import_path)
+import dnnlib
+from pytorch_fid import metric_main, metric_utils
+
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
     """
@@ -177,6 +184,40 @@ def main(mode, args):
     if rank == 0:
         create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
         print("Done.")
+    
+    # test FID
+    eval_args = dnnlib.EasyDict()
+    eval_args.dataset_kwargs = dnnlib.EasyDict(
+        class_name="training.dataset.ImageFolderDataset",
+        path=args.eval_refdir,
+        xflip=True,
+    )
+    eval_args.gen_dataset_kwargs = dnnlib.EasyDict(
+        class_name="training.dataset.ImageFolderDataset",
+        path=sample_folder_dir,
+        xflip=True,
+    )
+    progress = metric_utils.ProgressMonitor(verbose=True)
+    if rank == 0:
+        print("Calculating FID...")
+    eval_metrics = args.eval_metric.split(",")
+    for metric in eval_metrics:
+        result_dict = metric_main.calc_metric(metric=metric, 
+                                            dataset_kwargs=eval_args.dataset_kwargs,
+                                            num_gpus=dist.get_world_size(),
+                                            rank=rank, 
+                                            device=device,
+                                            progress=progress,
+                                            gen_dataset_kwargs=eval_args.gen_dataset_kwargs,
+                                            cache=True)
+        if rank == 0:
+            metric_dir = Path(sample_folder_dir) / "metrics"
+            metric_dir.mkdir(exist_ok=True, parents=True)
+            metric_main.report_metric(result_dict, run_dir=metric_dir.as_posix(), snapshot_pkl=sample_folder_dir)
+
+    del result_dict
+    gc.collect()
+    torch.cuda.empty_cache()
     dist.barrier()
     dist.destroy_process_group()
 
@@ -222,6 +263,10 @@ if __name__ == "__main__":
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--cond-mamba", action="store_true")
+    parser.add_argument("--scanning-continuity", action="store_true")
+
+    parser.add_argument("--eval-refdir", type=str, default=None)
+    parser.add_argument("--eval-metric", type=str, default="fid50k_full", help="Metrics to compute, separated by comma (e.g fid50k_full, pr50k3_full)")
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)
@@ -236,6 +281,7 @@ if __name__ == "__main__":
     group.add_argument("--loss-weight", type=none_or_str, default=None, choices=[None, "velocity", "likelihood"])
     group.add_argument("--sample-eps", type=float)
     group.add_argument("--train-eps", type=float)
+
 
     if mode == "ODE":
         group = parser.add_argument_group("ODE arguments")
