@@ -122,6 +122,21 @@ def center_crop_arr(pil_image, image_size):
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
 
 
+def adjust_learning_rate(optimizer, epoch, args):
+    """Decay the learning rate with half-cycle cosine after warmup"""
+    if epoch < args.warmup_epochs:
+        lr = args.lr * epoch / args.warmup_epochs 
+    else:
+        lr = args.min_lr + (args.lr - args.min_lr) * 0.5 * \
+            (1. + math.cos(math.pi * (epoch - args.warmup_epochs) / (args.epochs - args.warmup_epochs)))
+    for param_group in optimizer.param_groups:
+        if "lr_scale" in param_group:
+            param_group["lr"] = lr * param_group["lr_scale"]
+        else:
+            param_group["lr"] = lr
+    return lr
+
+
 #################################################################################
 #                                  Training Loop                                #
 #################################################################################
@@ -176,7 +191,11 @@ def main(args):
         args.loss_weight,
         args.train_eps,
         args.sample_eps,
-        path_args={"diffusion_form": args.diffusion_form},
+        path_args={
+            'diffusion_form': args.diffusion_form, 
+            'use_blurring': args.use_blurring, 
+            'blur_sigma_max': args.blur_sigma_max, 
+            'blur_upscale': args.blur_upscale},
         t_sample_mode=args.t_sample_mode,
     )  # default: velocity; 
     transport_sampler = Sampler(transport)
@@ -185,7 +204,7 @@ def main(args):
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-5, verbose=True)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-6, verbose=True)
 
     if args.model_ckpt and os.path.exists(args.model_ckpt):
         checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
@@ -265,18 +284,24 @@ def main(args):
     for epoch in range(init_epoch, args.epochs+1):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
-        for x, y in tqdm(loader):
+        for i, (x, y) in tqdm(enumerate(loader)):
+            # adjust_learning_rate(opt, i / len(loader) + epoch, args)
             x = x.to(device)
             y = None if not use_label else y.to(device)
             with torch.no_grad():
                 # Map input images to latent space + normalize latents:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             model_kwargs = dict(y=y)
+            before_forward = torch.cuda.memory_allocated(device)
             loss_dict = transport.training_losses(model, x, model_kwargs)
             loss = loss_dict["loss"].mean()
+            after_forward = torch.cuda.memory_allocated(device)
             opt.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+
             opt.step()
+            after_backward = torch.cuda.memory_allocated(device)
             update_ema(ema, model.module)
 
             # Log loss values:
@@ -292,7 +317,13 @@ def main(args):
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
                 avg_loss = avg_loss.item() / world_size
-                logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
+                logger.info(
+                    f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, "
+                    f"Train Steps/Sec: {steps_per_sec:.2f}, "
+                    f"GPU Mem before forward: {before_forward/10**9:.2f}Gb, "
+                    f"GPU Mem after forward: {after_forward/10**9:.2f}Gb, "
+                    f"GPU Mem after backward: {after_backward/10**9:.2f}Gb"
+                )
                 # Reset monitoring variables:
                 running_loss = 0
                 log_steps = 0
@@ -481,12 +512,22 @@ if __name__ == "__main__":
     parser.add_argument("--cond-mamba", action="store_true")
     parser.add_argument("--scanning-continuity", action="store_true")
     parser.add_argument("--enable-fourier-layers", action="store_true")
-        
+    parser.add_argument("--rms-norm", action="store_true")
+    parser.add_argument("--fused-add-norm", action="store_true")
+    parser.add_argument("--drop-path", type=float, default=0.)
+    parser.add_argument("--use-final-norm", action="store_true")
+    # parser.add_argument("--skip", action="store_true")
 
+        
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
+    parser.add_argument("--learnable-pe", action="store_true")
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
+    parser.add_argument('--min-lr', type=float, default=1e-6,)
+    parser.add_argument('--warmup-epochs', type=int, default=5,)
+    parser.add_argument('--max-grad-norm', type=float, default=2.,)
+
 
     group = parser.add_argument_group("Eval")
     group.add_argument("--eval-every", type=int, default=100)
@@ -512,6 +553,9 @@ if __name__ == "__main__":
                             choices=["none", "constant", "SBDM", "sigma", "linear", "decreasing", "increasing-decreasing", "log"],\
                             help="form of diffusion coefficient in the SDE")
     group.add_argument("--t-sample-mode", type=str, default="uniform")
+    group.add_argument("--use-blurring", action="store_true")
+    group.add_argument("--blur-sigma-max", type=int, default=3)
+    group.add_argument("--blur-upscale", type=int, default=4)
 
     args = parser.parse_args()
     main(args)

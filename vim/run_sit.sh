@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name=imnet # create a short name for your job
+#SBATCH --job-name=clip # create a short name for your job
 #SBATCH --output=/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurms/slurm_%A.out # create a output file
 #SBATCH --error=/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurms/slurm_%A.err # create a error file
 #SBATCH --partition=research # choose partition
@@ -19,7 +19,7 @@ set -e
 
 # export NCCL_SOCKET_IFNAME=bond0
 export NCCL_SOCKET_IFNAME=^docker0,lo
-export MASTER_PORT=10129
+export MASTER_PORT=10132
 export WORLD_SIZE=2
 NUM_GPUs=1
 
@@ -36,8 +36,8 @@ echo "NODELIST="${SLURM_NODELIST}
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
-torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-        --exp idiml2_gatedmlp_alterorders_celeb256_GVP_condmamba_fourierblk \
+TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
+        --exp idiml2_gatedmlp_alterorders_celeb256_GVP_condmamba_gradclip2_zigmasetting \
         --model DiM-L/2 \
         --datadir ../data/celeba_256/celeba-lmdb/ \
         --dataset celeba_256 \
@@ -54,7 +54,14 @@ torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_G
         --eval-nsamples 2_000 \
         --eval-bs 4 \
         --eval-refdir real_samples/celeba_256/ \
-        --enable-fourier-layers \
+        --rms-norm \
+        --fused-add-norm \
+        --drop-path 0.1 \
+        --learnable-pe \
+        # --use-blurring \
+        # --blur-upscale 4 \
+        # --blur-sigma-max 1 \
+        # --enable-fourier-layers \
         # --t-sample-mode logitnormal \
         # --scanning-continuity \
         # --model-ckpt results/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/checkpoints/0000025.pt \

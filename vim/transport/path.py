@@ -2,6 +2,8 @@ import torch as th
 import numpy as np
 from functools import partial
 
+from .blurring import dct_2d, idct_2d
+
 def expand_t_like_x(t, x):
     """Function to reshape time t to broadcastable dimension of x
     Args:
@@ -17,9 +19,12 @@ def expand_t_like_x(t, x):
 
 class ICPlan:
     """Linear Coupling Plan"""
-    def __init__(self, sigma=0.0, diffusion_form="none"):
+    def __init__(self, sigma=0.0, diffusion_form="none", use_blurring=False, blur_sigma_max=3, blur_upscale=4):
         self.sigma = sigma
         self.diffusion_form = diffusion_form
+        self.use_blurring = use_blurring
+        self.blur_sigma_max = blur_sigma_max
+        self.blur_upscale = blur_upscale
 
     def compute_alpha_t(self, t):
         """Compute the data coefficient along the path"""
@@ -146,6 +151,9 @@ class ICPlan:
         t = expand_t_like_x(t, x1)
         alpha_t, _ = self.compute_alpha_t(t)
         sigma_t, _ = self.compute_sigma_t(t)
+        if self.use_blurring:
+            blur_sigmas = self.blur_sigma_max * th.sin(sigma_t * th.pi / 2) ** 2 # importance: need to reverse t as we go from 0->1 (our data) and larger t induces greater blur levels
+            x1 = DCTBlur(x1, self.blur_upscale, blur_sigmas, 1e-3, x1.device)
         return alpha_t * x1 + sigma_t * x0
     
     def compute_xt(self, t, x0, x1):
@@ -222,3 +230,16 @@ class GVPCPlan(ICPlan):
     def compute_d_alpha_alpha_ratio_t(self, t):
         """Special purposed function for computing numerical stabled d_alpha_t / alpha_t"""
         return np.pi / (2 * th.tan(t * np.pi / 2))
+
+
+def DCTBlur(x, patch_size, blur_sigmas, min_scale, device):
+    blur_sigmas = th.as_tensor(blur_sigmas).to(device)
+    freqs = th.pi * th.linspace(0, patch_size-1, patch_size).to(device) / patch_size
+    frequencies_squared = freqs[:, None]**2 + freqs[None, :]**2
+
+    t = blur_sigmas ** 2 / 2
+    
+    dct_coefs = dct_2d(x, patch_size, norm='ortho')
+    scale = x.shape[-1] // patch_size
+    dct_coefs = dct_coefs * (th.exp(-frequencies_squared.repeat(scale,scale) * t) * (1 - min_scale) + min_scale)
+    return idct_2d(dct_coefs, patch_size, norm='ortho')

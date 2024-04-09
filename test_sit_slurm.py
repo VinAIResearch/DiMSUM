@@ -57,7 +57,12 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --bimamba-type none \
     --eval-refdir {eval_refdir} \
     --eval-metric {eval_metric} \
-    # --cond-mamba \
+    --cond-mamba \
+    --use-final-norm \
+    --rms-norm \
+    --fused-add-norm \
+    --learnable-pe \
+    # --enable-fourier-layers \
     # --scanning-continuity \
 
 
@@ -73,13 +78,13 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
 
 ###### ARGS
 model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
-exp = "idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample"
+exp = "idiml2_gatedmlp_alterorders_celeb256_GVP_condmamba_gradclip2_zigmasetting"
 ckpt_root = f"results/{exp}/checkpoints/"
 real_data = "real_samples/celeba_256"
 eval_metric = "fid{num_samples}k_full,pr{num_samples}k3_full".format(num_samples="50")
-BASE_PORT = 18019
-num_gpus = 2
-device = "0,1"
+BASE_PORT = 18021
+num_gpus = 1
+device = "0,"
 
 config = pd.DataFrame({
     "epochs": [225],

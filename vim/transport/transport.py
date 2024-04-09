@@ -48,6 +48,8 @@ class Transport:
         sample_eps,
         path_args={},
         t_sample_mode="uniform",
+        use_blurring=False,
+        blurring_configs={},
     ):
         path_options = {
             PathType.LINEAR: path.ICPlan,

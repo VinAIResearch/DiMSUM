@@ -144,6 +144,12 @@ if __name__ == "__main__":
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--cond-mamba", action="store_true")
     parser.add_argument("--scanning-continuity", action="store_true")
+    parser.add_argument("--enable-fourier-layers", action="store_true")
+    parser.add_argument("--rms-norm", action="store_true")
+    parser.add_argument("--fused-add-norm", action="store_true")
+    parser.add_argument("--drop-path", type=float, default=0.)
+    parser.add_argument("--learnable-pe", action="store_true")
+    parser.add_argument("--use-final-norm", action="store_true")
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)

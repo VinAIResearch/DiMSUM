@@ -19,6 +19,11 @@ def create_model(config):
             cond_mamba=config.cond_mamba,
             scanning_continuity=config.scanning_continuity,
             enable_fourier_layers=config.enable_fourier_layers,
+            drop_path=config.drop_path,
+            rms_norm=config.rms_norm,
+            fused_add_norm=config.fused_add_norm,
+            learnable_pe=config.learnable_pe,
+            use_final_norm=config.use_final_norm,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](

@@ -258,12 +258,18 @@ if __name__ == "__main__":
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--label-dropout", type=float, default=-1)
+    parser.add_argument("--use-final-norm", action="store_true")
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--cond-mamba", action="store_true")
     parser.add_argument("--scanning-continuity", action="store_true")
+    parser.add_argument("--enable-fourier-layers", action="store_true")
+    parser.add_argument("--rms-norm", action="store_true")
+    parser.add_argument("--fused-add-norm", action="store_true")
+    parser.add_argument("--drop-path", type=float, default=0.)
+    parser.add_argument("--learnable-pe", action="store_true")
 
     parser.add_argument("--eval-refdir", type=str, default=None)
     parser.add_argument("--eval-metric", type=str, default="fid50k_full", help="Metrics to compute, separated by comma (e.g fid50k_full, pr50k3_full)")
