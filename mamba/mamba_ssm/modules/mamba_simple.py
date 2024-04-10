@@ -52,7 +52,7 @@ class Mamba(nn.Module):
         layer_idx=None,
         device=None,
         dtype=None,
-        bimamba_type="none",
+        scan_type="none",
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -64,7 +64,7 @@ class Mamba(nn.Module):
         self.dt_rank = math.ceil(self.d_model / 16) if dt_rank == "auto" else dt_rank
         self.use_fast_path = use_fast_path
         self.layer_idx = layer_idx
-        self.bimamba_type = bimamba_type
+        self.scan_type = scan_type
 
         self.in_proj = nn.Linear(self.d_model, self.d_inner * 2, bias=bias, **factory_kwargs)
 
@@ -122,7 +122,7 @@ class Mamba(nn.Module):
         self.D._no_weight_decay = True
 
         # bidirectional
-        if self.bimamba_type == 'v2':
+        if self.scan_type == 'v2':
             A_b = repeat(
                 torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
                 "n -> d n",
@@ -183,7 +183,7 @@ class Mamba(nn.Module):
         A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
         if self.use_fast_path and inference_params is None:  # Doesn't support outputting the states
-            if self.bimamba_type == "v2":
+            if self.scan_type == "v2":
                 A_b = -torch.exp(self.A_b_log.float())
                 out = mamba_inner_fn_no_out_proj(
                     xz,
@@ -441,9 +441,9 @@ class CondMamba(nn.Module):
         layer_idx=None,
         device=None,
         dtype=None,
-        bimamba_type="none",
+        scan_type="none",
         d_cond=None,
-
+        **kwargs
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -455,7 +455,7 @@ class CondMamba(nn.Module):
         self.dt_rank = math.ceil(self.d_model / 16) if dt_rank == "auto" else dt_rank
         self.use_fast_path = use_fast_path
         self.layer_idx = layer_idx
-        self.bimamba_type = bimamba_type
+        self.scan_type = scan_type
         self.d_cond = d_cond
 
         self.in_proj = nn.Linear(self.d_model, self.d_inner * 2, bias=bias, **factory_kwargs)
@@ -516,7 +516,7 @@ class CondMamba(nn.Module):
         self.D._no_weight_decay = True
 
         # bidirectional
-        if self.bimamba_type == 'v2':
+        if self.scan_type == 'v2':
             A_b = repeat(
                 torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
                 "n -> d n",
@@ -547,6 +547,9 @@ class CondMamba(nn.Module):
             self.A_b_log, self.conv1d_b, self.x_proj_b, self.dt_proj_b, self.D_b, self.out_proj = [None]*6
 
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
+
+        self.register_buffer('zigzag_paths', kwargs.get("zigzag_paths", None))
+        self.register_buffer('zigzag_paths_reverse', kwargs.get("zigzag_paths_reverse", None))
 
     def forward(self, hidden_states, cond_emb=None, inference_params=None):
         """
@@ -579,7 +582,7 @@ class CondMamba(nn.Module):
 
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
         if self.use_fast_path and inference_params is None:  # Doesn't support outputting the states
-            if self.bimamba_type == "v2":
+            if self.scan_type == "v2":
                 A_b = -torch.exp(self.A_b_log.float())
                 out = mamba_inner_fn_no_out_proj_cond(
                     xz,
@@ -612,6 +615,11 @@ class CondMamba(nn.Module):
                 # F.linear(rearrange(out_z, "b d l -> b l d"), out_proj_weight, out_proj_bias)
                 out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias)
             else:
+                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                    #### rearrange
+                    _perm = self.zigzag_paths[self.layer_idx]
+                    # xz = xz[:, :, _perm].contiguous()  # [B,D,L]
+                    xz = torch.gather(xz, 2, _perm[None, None, :].expand_as(xz)) # [B,D,L] 
                 out = mamba_inner_fn_cond(
                     xz,
                     self.conv1d.weight,
@@ -628,6 +636,10 @@ class CondMamba(nn.Module):
                     delta_softplus=True,
                     init_states=cond_emb,
                 )
+                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                    _perm_rev = self.zigzag_paths_reverse[self.layer_idx]
+                    # out = out[:, _perm_rev, :].contiguous()  # out is [B,L,D]
+                    out = torch.gather(out, 1, _perm_rev[None, :, None].expand_as(out))  # out is [B,L,D]
         else:
             x, z = xz.chunk(2, dim=1)
             # Compute short convolution

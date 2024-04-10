@@ -508,7 +508,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-ckpt", type=str, default='')
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--learn-sigma", action="store_true")
-    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8'])
     parser.add_argument("--cond-mamba", action="store_true")
     parser.add_argument("--scanning-continuity", action="store_true")
     parser.add_argument("--enable-fourier-layers", action="store_true")

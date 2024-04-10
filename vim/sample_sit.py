@@ -139,7 +139,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--label-dropout", type=float, default=-1)
 
-    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--cond-mamba", action="store_true")

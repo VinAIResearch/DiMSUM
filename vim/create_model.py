@@ -13,7 +13,7 @@ def create_model(config):
             num_moe_experts=config.num_moe_experts,
             is_moe=config.is_moe,
             learn_sigma=config.learn_sigma,
-            bimamba_type=config.bimamba_type,
+            scan_type=config.bimamba_type,
             pe_type=config.pe_type, 
             block_type=config.block_type,
             cond_mamba=config.cond_mamba,

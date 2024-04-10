@@ -94,7 +94,7 @@ def idct(X, norm=None):
     return x.view(*x_shape)
 
 
-def dct_2d(x, size, norm=None):
+def dct_2d(x, size, norm=None, keeps_size=True):
     """
     2-dimentional Discrete Cosine Transform, Type II (a.k.a. the DCT)
     For the meaning of the parameter `norm`, see:
@@ -111,7 +111,7 @@ def dct_2d(x, size, norm=None):
     X2 = dct(X1.transpose(-1, -2), norm=norm)
     X2 = X2.transpose(-1, -2)
     
-    if origin_size > size:
+    if keeps_size and origin_size > size:
         X2 = reverse_rearrange(X2, origin_size)
     
     return X2

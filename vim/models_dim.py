@@ -28,6 +28,7 @@ from models_dit import FinalLayer, TimestepEmbedder, LabelEmbedder
 from models_dit import get_2d_sincos_pos_embed, modulate
 from switch_mlp import SwitchMLP
 from mlp import GatedMLP
+from scanning_orders import SCAN_ZOO, reverse_permut_np
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -230,8 +231,6 @@ class DiMBlock(nn.Module):
             assert isinstance(
                 self.norm, (nn.LayerNorm, RMSNorm)
             ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
-        # else:
-        #     self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
 
         self.norm_2 = norm_cls(dim)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -405,6 +404,93 @@ class FourierBlock(nn.Module):
         return x
 
 
+class FourierBlockv2(nn.Module):
+    def __init__(
+        self,
+        dim,
+        length,
+        mixer_cls, 
+        fused_add_norm=False, 
+        residual_in_fp32=False, 
+        drop_path=0.,
+        norm_cls=nn.LayerNorm,
+        dct_size=2,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.dct_size = dct_size
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+
+        self.norm = norm_cls(dim)
+        self.mixer = mixer_cls(dim)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        if self.fused_add_norm:
+            assert RMSNorm is not None, "RMSNorm import fails"
+            assert isinstance(
+                self.norm, (nn.LayerNorm, RMSNorm)
+            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
+
+        grid_size = int(math.sqrt(length))
+        path_gen_fn = SCAN_ZOO['jpeg']
+        self.register_buffer('zigzag_path', torch.from_numpy(path_gen_fn(N=grid_size)))
+        self.register_buffer('zigzag_path_reverse', torch.from_numpy(reverse_permut_np(self.zigzag_path)))
+    
+    def forward(self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None):
+        if not self.fused_add_norm:
+            if residual is None:
+                residual = hidden_states
+            else:
+                residual = residual + self.drop_path(hidden_states)
+
+            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+            if self.residual_in_fp32:
+                residual = residual.to(torch.float32)
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+            if residual is None:
+                hidden_states, residual = fused_add_norm_fn(
+                    hidden_states,
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )
+            else:
+                hidden_states, residual = fused_add_norm_fn(
+                    self.drop_path(hidden_states),
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )    
+        hidden_size = int(math.sqrt(hidden_states.size(1)))
+        h = dct_2d(rearrange(hidden_states, "b (h w) d -> b d h w", h=hidden_size), 
+            self.dct_size, norm='ortho', keeps_size=False) # (B, L, D)
+        h = rearrange(h, "b d h w -> b (h w) d")
+        _perm = self.zigzag_path
+        h = torch.gather(h, 1, _perm[None, :, None].expand_as(h)) # [B, L, D] 
+        h = self.mixer(h, inference_params=inference_params)
+        _perm_rev = self.zigzag_path_reverse
+        h = torch.gather(h, 1, _perm_rev[None, :, None].expand_as(h))  
+        h = rearrange(h, "(b p1 p2) (h w) d -> b d (p1 h) (p2 w)", 
+            h=int(math.sqrt(h.size(1))), 
+            p1=hidden_size//self.dct_size, 
+            p2=hidden_size//self.dct_size, 
+        )
+        out = idct_2d(h, self.dct_size, norm='ortho').to(dtype=torch.float32)
+        out = rearrange(out, "b c h w -> b (h w) c") # [B, L, D]
+        return out, residual
+
+    def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
+        return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
+
+
 class MoEBlock(nn.Module):
     def __init__(
         self,
@@ -488,6 +574,11 @@ class DiMBlockRaw(nn.Module):
         self.norm = norm_cls(dim)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        if self.fused_add_norm:
+            assert RMSNorm is not None, "RMSNorm import fails"
+            assert isinstance(
+                self.norm, (nn.LayerNorm, RMSNorm)
+            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
 
     def forward(
@@ -499,52 +590,77 @@ class DiMBlockRaw(nn.Module):
             hidden_states: the sequence to the encoder layer (required).
             residual: hidden_states = Mixer(LN(residual))
         """
-        if residual is None:
-            residual = hidden_states
-        else:
-            residual = residual + self.drop_path(hidden_states)
+        if not self.fused_add_norm:
+            if residual is None:
+                residual = hidden_states
+            else:
+                residual = residual + self.drop_path(hidden_states)
 
+            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+            if self.residual_in_fp32:
+                residual = residual.to(torch.float32)
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+            if residual is None:
+                hidden_states, residual = fused_add_norm_fn(
+                    hidden_states,
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )
+            else:
+                hidden_states, residual = fused_add_norm_fn(
+                    self.drop_path(hidden_states),
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )    
+
+        l = hidden_states.shape[1]
+        h = w = int(np.sqrt(l))
         if self.transpose:
-            l = hidden_states.shape[1]
-            h = w = int(np.sqrt(l))
             hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
-            residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
+            # residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
 
         if self.scanning_continuity:
             hidden_states = rearrange(hidden_states.clone(), 'n (w h) c -> n c w h', h=h, w=w)
-            residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
             hidden_states[:, :, 1::2] = hidden_states[:, :, 1::2].flip(-1)
-            residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
             hidden_states = rearrange(hidden_states, 'n c w h -> n (w h) c', h=h, w=w)
-            residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)   
+
+            # residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
+            # residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
+            # residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)   
 
         if self.reverse:
             hidden_states = hidden_states.flip(1)
-            residual = residual.flip(1)
-
-        hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
-        if self.residual_in_fp32:
-            residual = residual.to(torch.float32)
+            # residual = residual.flip(1)
 
         shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
-        hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
+        hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), c, inference_params=inference_params)
 
         # transform back
         if self.reverse:
             hidden_states = hidden_states.flip(1)
-            residual = residual.flip(1)
+            # residual = residual.flip(1)
 
         if self.scanning_continuity:
             hidden_states = rearrange(hidden_states.clone(), 'n (w h) c -> n c w h', h=h, w=w)
-            residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
             hidden_states[:, :, 1::2] = hidden_states[:, :, 1::2].flip(-1)
-            residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
             hidden_states = rearrange(hidden_states, 'n c w h -> n (w h) c', h=h, w=w)
-            residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)   
+
+            # residual = rearrange(residual.clone(), 'n (w h) c -> n c w h', h=h, w=w)   
+            # residual[:, :, 1::2] = residual[:, :, 1::2].flip(-1)
+            # residual = rearrange(residual, 'n c w h -> n (w h) c', h=h, w=w)
 
         if self.transpose:
             hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
-            residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
+            # residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
 
         return hidden_states, residual
 
@@ -567,7 +683,7 @@ class DiM(nn.Module):
         rms_norm=False,
         residual_in_fp32=True,
         fused_add_norm=False,
-        bimamba_type="none",
+        scan_type="none",
         initializer_cfg=None,
         num_moe_experts=8,
         mamba_moe_layers=None,
@@ -586,7 +702,7 @@ class DiM(nn.Module):
         use_final_norm=False,
     ):
         super().__init__()
-        self.depth = depth if block_type != "raw" else depth*2
+        self.depth = depth if block_type != "raw" else int(depth*1.5)
         self.learn_sigma = learn_sigma
         self.in_channels = in_channels
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
@@ -616,9 +732,31 @@ class DiM(nn.Module):
         elif self.pe_type == "cpe":
             self.pos_cnn = AdaInPosCNN(hidden_size, hidden_size)
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path, depth)]  # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path, self.depth)]  # stochastic depth decay rule
         inter_dpr = [0.0] + dpr
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+        grid_size = int(math.sqrt(num_patches))
+        block_kwargs = {}
+        if (
+            scan_type.startswith("zigma")
+            or scan_type.startswith("sweep")
+        ):
+            num_paths = int(scan_type.split("_")[1])
+            path_gen_fn = SCAN_ZOO[scan_type.split("_")[0]]
+            zz_paths = path_gen_fn(N=grid_size)[:num_paths]
+            
+            zz_paths_rev = [reverse_permut_np(x) for x in zz_paths]
+            zz_paths = zz_paths * self.depth
+            zz_paths_rev = zz_paths_rev * self.depth
+            zz_paths = [torch.from_numpy(x)[None,] for x in zz_paths]
+            zz_paths_rev = [torch.from_numpy(x)[None,] for x in zz_paths_rev]
+            assert len(zz_paths) == len(
+                zz_paths_rev
+            ), f"{len(zz_paths)} != {len(zz_paths_rev)}"
+            block_kwargs["zigzag_paths"] = torch.cat(zz_paths, dim=0)
+            block_kwargs["zigzag_paths_reverse"] = torch.cat(zz_paths_rev, dim=0)
+
 
         self.blocks = nn.ModuleList(
             [
@@ -630,7 +768,7 @@ class DiM(nn.Module):
                     residual_in_fp32=residual_in_fp32,
                     fused_add_norm=fused_add_norm,
                     layer_idx=i,
-                    bimamba_type=bimamba_type,
+                    scan_type=scan_type,
                     drop_path=inter_dpr[i],
                     num_moe_experts=num_moe_experts,
                     mamba_moe_layers=mamba_moe_layers,
@@ -639,14 +777,15 @@ class DiM(nn.Module):
                     routing_mode=routing_mode,
                     is_moe=is_moe,
                     block_type=block_type,
-                    # # alternate biorders (each ssm handle two orders), note: bimamba_type == 'v2'
+                    # # alternate biorders (each ssm handle two orders), note: scan_type == 'v2'
                     # reverse=False, 
                     # transpose=(i % 2 > 0),
                     # alternate orders (each ssm handle one order)
-                    reverse=not (bimamba_type =='v2') and (i % 2 > 0),
-                    transpose=not (bimamba_type =='v2') and (i % 4 >= 2),
+                    reverse=(scan_type =='none') and (i % 2 > 0),
+                    transpose=(scan_type =='none') and (i % 4 >= 2),
                     cond_mamba=cond_mamba,
                     scanning_continuity=scanning_continuity,
+                    **block_kwargs,
                 )
                 for i in range(self.depth)
             ]
@@ -660,7 +799,7 @@ class DiM(nn.Module):
         #     residual_in_fp32=residual_in_fp32,
         #     fused_add_norm=fused_add_norm,
         #     layer_idx=i,
-        #     bimamba_type=bimamba_type,
+        #     scan_type=scan_type,
         #     drop_path=inter_dpr[i],
         #     num_moe_experts=num_moe_experts,
         #     mamba_moe_layers=mamba_moe_layers,
@@ -669,12 +808,12 @@ class DiM(nn.Module):
         #     routing_mode=routing_mode,
         #     is_moe=is_moe,
         #     block_type=block_type,
-        #     # # alternate biorders (each ssm handle two orders), note: bimamba_type == 'v2'
+        #     # # alternate biorders (each ssm handle two orders), note: scan_type == 'v2'
         #     # reverse=False, 
         #     # transpose=(i % 2 > 0),
         #     # alternate orders (each ssm handle one order)
-        #     reverse=not (bimamba_type =='v2') and (i % 2 > 0),
-        #     transpose=not (bimamba_type =='v2') and (i % 4 >= 2),
+        #     reverse=not (scan_type =='v2') and (i % 2 > 0),
+        #     transpose=not (scan_type =='v2') and (i % 4 >= 2),
         #     cond_mamba=cond_mamba,
         #     scanning_continuity=scanning_continuity,
         # )
@@ -689,7 +828,7 @@ class DiM(nn.Module):
         #             residual_in_fp32=residual_in_fp32,
         #             fused_add_norm=fused_add_norm,
         #             layer_idx=i,
-        #             bimamba_type=bimamba_type,
+        #             scan_type=scan_type,
         #             drop_path=inter_dpr[i + depth // 2 + 1],
         #             num_moe_experts=num_moe_experts,
         #             mamba_moe_layers=mamba_moe_layers,
@@ -698,12 +837,12 @@ class DiM(nn.Module):
         #             routing_mode=routing_mode,
         #             is_moe=is_moe,
         #             block_type=block_type,
-        #             # # alternate biorders (each ssm handle two orders), note: bimamba_type == 'v2'
+        #             # # alternate biorders (each ssm handle two orders), note: scan_type == 'v2'
         #             # reverse=False, 
         #             # transpose=(i % 2 > 0),
         #             # alternate orders (each ssm handle one order)
-        #             reverse=not (bimamba_type =='v2') and (i % 2 > 0),
-        #             transpose=not (bimamba_type =='v2') and (i % 4 >= 2),
+        #             reverse=not (scan_type =='v2') and (i % 2 > 0),
+        #             transpose=not (scan_type =='v2') and (i % 4 >= 2),
         #             cond_mamba=cond_mamba,
         #             scanning_continuity=scanning_continuity,
         #             skip=skip,
@@ -713,12 +852,24 @@ class DiM(nn.Module):
         # )
 
         if enable_fourier_layers:
+            dct_size = 8
             self.fourier_blocks = nn.ModuleList(
                 [
                     FourierBlock(
                         hidden_size,
                         length=(img_resolution//patch_size)**2,
                     )
+
+                    # FourierBlockv2(
+                    #     hidden_size,
+                    #     length=dct_size*dct_size, # (img_resolution // patch_size // dct_size)**2,
+                    #     mixer_cls=partial(Mamba, layer_idx=i, scan_type="none"),
+                    #     residual_in_fp32=residual_in_fp32,
+                    #     fused_add_norm=fused_add_norm,
+                    #     drop_path=dpr[i],
+                    #     norm_cls=partial(nn.LayerNorm if not rms_norm else RMSNorm, eps=1e-5),
+                    #     dct_size=dct_size,
+                    # )
                     for i in range(self.depth) 
                 ]
             )
@@ -829,9 +980,14 @@ class DiM(nn.Module):
 
         # please comment in/out if want to use ViM Pefeat
         residual = None
+        freq_residual = None
         for idx, block in enumerate(self.blocks):
             if self.enable_fourier_layers:
-                x = self.fourier_blocks[idx](x)
+                if isinstance(self.fourier_blocks[idx], FourierBlock):
+                    x = self.fourier_blocks[idx](x)
+                else:
+                    x, freq_residual = self.fourier_blocks[idx](x, freq_residual)
+
             if self.pe_type == "ape":
                 # PE + feature (Pefeat)
                 # if idx <= 5:
@@ -982,7 +1138,7 @@ def create_block(
     layer_idx=None,
     device=None,
     dtype=None,
-    bimamba_type="none",
+    scan_type="none",
     add_bias_linear=False,
     gated_linear_unit=True,
     routing_mode:str="sinkhorn", # 'sinkhorn', 'top1', 'top2', 'sinkhorn_top2'
@@ -995,6 +1151,7 @@ def create_block(
     cond_mamba=False, # conditional mode
     scanning_continuity=False,
     skip=False,
+    **block_kwargs,
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -1004,9 +1161,9 @@ def create_block(
     )
     if layer_idx % 2 == 0 or not is_moe:
         if cond_mamba:
-            mixer_cls = partial(CondMamba, layer_idx=layer_idx, bimamba_type=bimamba_type, d_cond=d_model, **ssm_cfg, **factory_kwargs)
+            mixer_cls = partial(CondMamba, layer_idx=layer_idx, scan_type=scan_type, d_cond=d_model, **ssm_cfg, **block_kwargs, **factory_kwargs)
         else:
-            mixer_cls = partial(Mamba, layer_idx=layer_idx, bimamba_type=bimamba_type, **ssm_cfg, **factory_kwargs)
+            mixer_cls = partial(Mamba, layer_idx=layer_idx, scan_type=scan_type, **ssm_cfg, **factory_kwargs)
         if block_type == "raw":
             block = DiMBlockRaw(
                 d_model,
@@ -1056,7 +1213,7 @@ def DiM_XL_2(**kwargs):
     return DiM(depth=24, # 28, double 28 if use DiMBlockRaw
         hidden_size=1152, 
         patch_size=2, 
-        # bimamba_type="v2", 
+        # scan_type="v2", 
         initializer_cfg=None,
         # fused_add_norm=False, 
         # rms_norm=False, 
@@ -1068,7 +1225,7 @@ def DiM_L_2(**kwargs):
     return DiM(depth=16, # 24, double 24 if use DiMBlockRaw
         hidden_size=1024, 
         patch_size=2, 
-        # bimamba_type="v2", 
+        # scan_type="v2", 
         initializer_cfg=None,
         # fused_add_norm=False, 
         # rms_norm=False, 
@@ -1080,7 +1237,7 @@ def DiM_B_2(**kwargs):
     return DiM(depth=12, # 12, double 12 if use DiMBlockRaw
         hidden_size=768, 
         patch_size=2, 
-        # bimamba_type="v2", 
+        # scan_type="v2", 
         initializer_cfg=None,
         # fused_add_norm=False, 
         # rms_norm=False, 
