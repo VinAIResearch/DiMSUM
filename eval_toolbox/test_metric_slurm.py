@@ -58,7 +58,7 @@ eval_mode = ["10k", "50k"][1]
 
 # 
 config = pd.DataFrame({
-    "gen_data": ["samples/idiml2_gatedmlp_alterorders_celeb256_linear_logitnormal/DiM-L-2-0000225-cfg-1.0-128-ODE-250-dopri5",], # list(sorted(glob("samples/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/*/"))),
+    "gen_data": ["samples/idiml2_gatedmlp_alterorders_celeb256_GVP_condmamba_fourierblk/DiM-L-2-0000300-cfg-1.0-128-ODE-250-dopri5"], # list(sorted(glob("samples/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/*/"))),
 })
 print(config)
 

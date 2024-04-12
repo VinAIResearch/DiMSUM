@@ -53,6 +53,7 @@ class Mamba(nn.Module):
         device=None,
         dtype=None,
         scan_type="none",
+        **kwargs
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -154,6 +155,8 @@ class Mamba(nn.Module):
 
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
 
+        self.register_buffer('zigzag_paths', kwargs.get("zigzag_paths", None))
+        self.register_buffer('zigzag_paths_reverse', kwargs.get("zigzag_paths_reverse", None))
 
     def forward(self, hidden_states, cond_emb=None, inference_params=None):
         """
@@ -161,7 +164,6 @@ class Mamba(nn.Module):
         Returns: same shape as hidden_states
         """
         batch, seqlen, dim = hidden_states.shape
-
 
         conv_state, ssm_state = None, None
         if inference_params is not None:
@@ -214,6 +216,11 @@ class Mamba(nn.Module):
                 # F.linear(rearrange(out_z, "b d l -> b l d"), out_proj_weight, out_proj_bias)
                 out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias)
             else:
+                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                    #### rearrange
+                    _perm = self.zigzag_paths[self.layer_idx]
+                    # xz = xz[:, :, _perm].contiguous()  # [B,D,L]
+                    xz = torch.gather(xz, 2, _perm[None, None, :].expand_as(xz)) # [B,D,L] 
                 out = mamba_inner_fn(
                     xz,
                     self.conv1d.weight,
@@ -229,6 +236,10 @@ class Mamba(nn.Module):
                     delta_bias=self.dt_proj.bias.float(),
                     delta_softplus=True,
                 )
+                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                    _perm_rev = self.zigzag_paths_reverse[self.layer_idx]
+                    # out = out[:, _perm_rev, :].contiguous()  # out is [B,L,D]
+                    out = torch.gather(out, 1, _perm_rev[None, :, None].expand_as(out))  # out is [B,L,D]
         else:
             x, z = xz.chunk(2, dim=1)
             # Compute short convolution

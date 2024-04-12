@@ -78,83 +78,169 @@ def jpeg_zigzag(N):
     Jpeg's zigzag scan
     Modified from: https://github.com/getsanjeev/compression-DCT/blob/master/zigzag.py
     """
-    #initializing the variables
-    #----------------------------------
-    h = 0
-    v = 0
+    def zigzag_path_lr(N, start_row, start_col, dir_row, dir_col):
+        #initializing the variables
+        #----------------------------------
+        h = 0
+        v = 0
 
-    vmin = 0
-    hmin = 0
+        vmin = 0
+        hmin = 0
 
-    vmax = N # input.shape[0]
-    hmax = N # input.shape[1]
-    #print(vmax, hmax)
+        vmax = N # input.shape[0]
+        hmax = N # input.shape[1]
+        #print(vmax, hmax)
 
-    i = 0
+        i = 0
 
-    # output = np.zeros(( vmax * hmax))
-    indices = []
-    #----------------------------------
+        # output = np.zeros(( vmax * hmax))
+        indices = []
+        #----------------------------------
 
-    while ((v < vmax) and (h < hmax)):
-        indices.append(v*vmax + h)
-        # output[i] = input[v, h]        # if we got to the first line
+        while ((v < vmax) and (h < hmax)):
+            # indices.append(v*vmax + h)
+            indices.append((start_row + dir_row * v) * vmax + start_col + dir_col * h)
+            # output[i] = input[v, h]        # if we got to the first line
 
-        if ((h + v) % 2) == 0:                 # going up
-            
-            if (v == vmin):
-                #print(1)
+            if ((h + v) % 2) == 0:                 # going up
+                
+                if (v == vmin):
+                    #print(1)
 
-                if (h == hmax):
+                    if (h == hmax):
+                        v = v + 1
+                    else:
+                        h = h + 1                        
+
+
+                elif ((h == hmax -1 ) and (v < vmax)):   # if we got to the last column
+                    #print(2)
+
                     v = v + 1
-                else:
-                    h = h + 1                        
 
-                i = i + 1
-
-            elif ((h == hmax -1 ) and (v < vmax)):   # if we got to the last column
-                #print(2)
-
-                v = v + 1
-                i = i + 1
-
-            elif ((v > vmin) and (h < hmax -1 )):    # all other cases
-                #print(3)
-                v = v - 1
-                h = h + 1
-                i = i + 1
-
-        
-        else:                                    # going down
-
-            if ((v == vmax -1) and (h <= hmax -1)):       # if we got to the last line
-                #print(4)
-                h = h + 1
-                i = i + 1
-        
-            elif (h == hmin):                  # if we got to the first column
-                #print(5)
-
-                if (v == vmax -1):
+                elif ((v > vmin) and (h < hmax -1 )):    # all other cases
+                    #print(3)
+                    v = v - 1
                     h = h + 1
-                else:
+
+            
+            else:                                    # going down
+
+                if ((v == vmax -1) and (h <= hmax -1)):       # if we got to the last line
+                    #print(4)
+                    h = h + 1
+            
+                elif (h == hmin):                  # if we got to the first column
+                    #print(5)
+
+                    if (v == vmax -1):
+                        h = h + 1
+                    else:
+                        v = v + 1
+
+
+                elif ((v < vmax -1) and (h > hmin)):     # all other cases
+                    #print(6)
+                    v = v + 1
+                    h = h - 1
+
+            i = i + 1
+            if ((v == vmax-1) and (h == hmax-1)):          # bottom right element
+                #print(7)        	
+                # output[i] = input[v, h] 
+                # indices.append(v*vmax + h)
+                indices.append((start_row + dir_row * v) * vmax + start_col + dir_col * h)
+                break
+
+        return np.array(indices)
+
+    def zigzag_path_tb(N, start_row, start_col, dir_row, dir_col):
+        #initializing the variables
+        #----------------------------------
+        h = 0
+        v = 0
+
+        vmin = 0
+        hmin = 0
+
+        vmax = N # input.shape[0]
+        hmax = N # input.shape[1]
+        #print(vmax, hmax)
+
+        i = 0
+
+        # output = np.zeros(( vmax * hmax))
+        indices = []
+        #----------------------------------
+
+        while ((v < vmax) and (h < hmax)):
+            indices.append((start_row + dir_row * v) * vmax + start_col + dir_col * h)
+            # indices.append(v*vmax + h)
+            # output[i] = input[v, h]        # if we got to the first line
+
+            if ((h + v) % 2) == 0:                 # going up
+
+                if (h == hmin):                  # if we got to the first column
+                    #print(5)
+
+                    if (v == vmax -1):
+                        h = h + 1
+                    else:
+                        v = v + 1
+
+                elif ((v == vmax -1) and (h <= hmax -1)):       # if we got to the last line
+                    #print(4)
+                    h = h + 1
+            
+                elif ((v < vmax -1) and (h > hmin)):     # all other cases
+                    #print(6)
+                    v = v + 1
+                    h = h - 1
+            
+            else:                                    # going down
+                
+                if ((h == hmax -1 ) and (v < vmax)):   # if we got to the last column
+                    #print(2)
+
                     v = v + 1
 
-                i = i + 1
+                elif (v == vmin):
+                    #print(1)
 
-            elif ((v < vmax -1) and (h > hmin)):     # all other cases
-                #print(6)
-                v = v + 1
-                h = h - 1
-                i = i + 1
+                    if (h == hmax):
+                        v = v + 1
+                    else:
+                        h = h + 1                        
 
-        if ((v == vmax-1) and (h == hmax-1)):          # bottom right element
-            #print(7)        	
-            # output[i] = input[v, h] 
-            indices.append(v*vmax + h)
-            break
+                elif ((v > vmin) and (h < hmax -1 )):    # all other cases
+                    #print(3)
+                    v = v - 1
+                    h = h + 1
 
-    return np.array(indices)
+
+            i = i + 1
+            if ((v == vmax-1) and (h == hmax-1)):          # bottom right element
+                #print(7)        	
+                # output[i] = input[v, h] 
+                indices.append((start_row + dir_row * v) * vmax + start_col + dir_col * h)
+                # indices.append(v*vmax + h)
+                break
+
+        return np.array(indices)
+
+    paths = []
+    for start_row, start_col, dir_row, dir_col in [
+        (0, 0, 1, 1),
+        (0, N - 1, 1, -1),
+        (N - 1, 0, -1, 1),
+        (N - 1, N - 1, -1, -1),
+    ]:
+        paths.append(zigzag_path_lr(N, start_row, start_col, dir_row, dir_col))
+        paths.append(zigzag_path_tb(N, start_row, start_col, dir_row, dir_col))
+
+    for _index, _p in enumerate(paths):
+        paths[_index] = np.array(_p)
+    return paths
 
 
 def reverse_permut_np(permutation):

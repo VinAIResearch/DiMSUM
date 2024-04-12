@@ -374,7 +374,7 @@ def main(args):
             del samples
         # dist.barrier()
 
-        if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
+        if epoch % args.eval_every == 0 and epoch > 0:
             ref_dir = Path(args.eval_refdir)
             if ref_dir.exists():
                 n = args.eval_bs

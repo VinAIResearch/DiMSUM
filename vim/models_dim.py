@@ -8,8 +8,6 @@ from torch import Tensor
 import torch.nn as nn
 from timm.models.vision_transformer import Attention, Mlp, PatchEmbed
 
-from functools import partial
-
 from mamba_ssm.modules.mamba_simple import Mamba, CondMamba
 from rope import *
 from pe.my_rotary import get_2d_sincos_rotary_embed, apply_rotary
@@ -432,10 +430,10 @@ class FourierBlockv2(nn.Module):
                 self.norm, (nn.LayerNorm, RMSNorm)
             ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
 
-        grid_size = int(math.sqrt(length))
-        path_gen_fn = SCAN_ZOO['jpeg']
-        self.register_buffer('zigzag_path', torch.from_numpy(path_gen_fn(N=grid_size)))
-        self.register_buffer('zigzag_path_reverse', torch.from_numpy(reverse_permut_np(self.zigzag_path)))
+        # grid_size = int(math.sqrt(length))
+        # path_gen_fn = SCAN_ZOO['jpeg']
+        # self.register_buffer('zigzag_path', torch.from_numpy(path_gen_fn(N=grid_size)))
+        # self.register_buffer('zigzag_path_reverse', torch.from_numpy(reverse_permut_np(self.zigzag_path)))
     
     def forward(self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None):
         if not self.fused_add_norm:
@@ -470,21 +468,37 @@ class FourierBlockv2(nn.Module):
                     eps=self.norm.eps,
                 )    
         hidden_size = int(math.sqrt(hidden_states.size(1)))
-        h = dct_2d(rearrange(hidden_states, "b (h w) d -> b d h w", h=hidden_size), 
-            self.dct_size, norm='ortho', keeps_size=False) # (B, L, D)
-        h = rearrange(h, "b d h w -> b (h w) d")
-        _perm = self.zigzag_path
-        h = torch.gather(h, 1, _perm[None, :, None].expand_as(h)) # [B, L, D] 
+        ### 2D DCT
+        # h = dct_2d(rearrange(hidden_states, "b (h w) d -> b d h w", h=hidden_size), 
+        #     self.dct_size, norm='ortho', keeps_size=True) # (B, L, D)
+        # h = rearrange(h, "b d h w -> b (h w) d").contiguous()
+
+        ### 1D DCT
+        h = dct(rearrange(hidden_states, "b l d -> b d l"), norm='ortho') # (B, L, D)
+        h = rearrange(h, "b d l -> b l d").contiguous()
+
+        # _perm = self.zigzag_path
+        # h = torch.gather(h, 1, _perm[None, :, None].expand_as(h)) # [B, L, D] 
+
         h = self.mixer(h, inference_params=inference_params)
-        _perm_rev = self.zigzag_path_reverse
-        h = torch.gather(h, 1, _perm_rev[None, :, None].expand_as(h))  
-        h = rearrange(h, "(b p1 p2) (h w) d -> b d (p1 h) (p2 w)", 
-            h=int(math.sqrt(h.size(1))), 
-            p1=hidden_size//self.dct_size, 
-            p2=hidden_size//self.dct_size, 
-        )
-        out = idct_2d(h, self.dct_size, norm='ortho').to(dtype=torch.float32)
-        out = rearrange(out, "b c h w -> b (h w) c") # [B, L, D]
+
+        # _perm_rev = self.zigzag_path_reverse
+        # h = torch.gather(h, 1, _perm_rev[None, :, None].expand_as(h))  
+
+        ### 2D DCT
+        # h = rearrange(h, "(b p1 p2) (h w) d -> b d (p1 h) (p2 w)", 
+        #     h=int(math.sqrt(h.size(1))), 
+        #     p1=1, #hidden_size//self.dct_size, 
+        #     p2=1, #hidden_size//self.dct_size, 
+        # )
+        # out = idct_2d(h, self.dct_size, norm='ortho').to(dtype=torch.float32)
+        # out = rearrange(out, "b c h w -> b (h w) c").contiguous() # [B, L, D]
+
+        ### 1D DCT
+        h = rearrange(h, "b l d -> b d l")
+        out = idct(h, norm='ortho').to(dtype=torch.float32)
+        out = rearrange(out, "b d l -> b l d").contiguous() # [B, L, D]
+
         return out, residual
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
@@ -738,25 +752,31 @@ class DiM(nn.Module):
 
         grid_size = int(math.sqrt(num_patches))
         block_kwargs = {}
-        if (
-            scan_type.startswith("zigma")
-            or scan_type.startswith("sweep")
-        ):
-            num_paths = int(scan_type.split("_")[1])
-            path_gen_fn = SCAN_ZOO[scan_type.split("_")[0]]
-            zz_paths = path_gen_fn(N=grid_size)[:num_paths]
+        def gen_paths(N, path_type, num_paths):
+            path_gen_fn = SCAN_ZOO[path_type]
+            zz_paths = path_gen_fn(N)[:num_paths]
             
             zz_paths_rev = [reverse_permut_np(x) for x in zz_paths]
-            zz_paths = zz_paths * self.depth
-            zz_paths_rev = zz_paths_rev * self.depth
             zz_paths = [torch.from_numpy(x)[None,] for x in zz_paths]
             zz_paths_rev = [torch.from_numpy(x)[None,] for x in zz_paths_rev]
+            zz_paths = torch.cat(zz_paths * self.depth, dim=0)
+            zz_paths_rev = torch.cat(zz_paths_rev * self.depth, dim=0)
+
             assert len(zz_paths) == len(
                 zz_paths_rev
             ), f"{len(zz_paths)} != {len(zz_paths_rev)}"
-            block_kwargs["zigzag_paths"] = torch.cat(zz_paths, dim=0)
-            block_kwargs["zigzag_paths_reverse"] = torch.cat(zz_paths_rev, dim=0)
-
+            return zz_paths, zz_paths_rev
+            
+        if (
+            scan_type.startswith("zigma")
+            or scan_type.startswith("sweep")
+            or scan_type.startswith("jpeg")
+        ):
+            path_type = scan_type.split("_")[0]
+            num_paths = int(scan_type.split("_")[1])
+            zz_paths, zz_paths_rev = gen_paths(grid_size, path_type, num_paths)
+            block_kwargs["zigzag_paths"] = zz_paths
+            block_kwargs["zigzag_paths_reverse"] = zz_paths_rev
 
         self.blocks = nn.ModuleList(
             [
@@ -852,24 +872,30 @@ class DiM(nn.Module):
         # )
 
         if enable_fourier_layers:
-            dct_size = 8
+            dct_size = [16,8,4,1][1]
+            path_type = 'jpeg'
+            num_paths = 8
+            zz_paths, zz_paths_rev = gen_paths(grid_size, path_type, num_paths)
+            fourier_block_kwargs = {}
+            fourier_block_kwargs["zigzag_paths"] = zz_paths
+            fourier_block_kwargs["zigzag_paths_reverse"] = zz_paths_rev
             self.fourier_blocks = nn.ModuleList(
                 [
-                    FourierBlock(
-                        hidden_size,
-                        length=(img_resolution//patch_size)**2,
-                    )
-
-                    # FourierBlockv2(
+                    # FourierBlock(
                     #     hidden_size,
-                    #     length=dct_size*dct_size, # (img_resolution // patch_size // dct_size)**2,
-                    #     mixer_cls=partial(Mamba, layer_idx=i, scan_type="none"),
-                    #     residual_in_fp32=residual_in_fp32,
-                    #     fused_add_norm=fused_add_norm,
-                    #     drop_path=dpr[i],
-                    #     norm_cls=partial(nn.LayerNorm if not rms_norm else RMSNorm, eps=1e-5),
-                    #     dct_size=dct_size,
+                    #     length=(img_resolution//patch_size)**2,
                     # )
+
+                    FourierBlockv2(
+                        hidden_size,
+                        length=(img_resolution // patch_size)**2, # dct_size*dct_size, 
+                        mixer_cls=partial(Mamba, layer_idx=i, scan_type=f"{path_type}_{num_paths}", **fourier_block_kwargs),
+                        residual_in_fp32=residual_in_fp32,
+                        fused_add_norm=fused_add_norm,
+                        drop_path=dpr[i],
+                        norm_cls=partial(nn.LayerNorm if not rms_norm else RMSNorm, eps=1e-5),
+                        dct_size=dct_size,
+                    )
                     for i in range(self.depth) 
                 ]
             )
