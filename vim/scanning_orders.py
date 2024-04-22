@@ -1,5 +1,7 @@
 import numpy as np
+import math
 import torch
+from torch.nn import functional as F
 
 def sweep_path(N):
     """
@@ -340,6 +342,80 @@ def inverse_jpeg_zigzag(input, vmax, hmax):
             break
 
     return output
+
+"""PyTorch code for local scan and local reverse"""
+
+
+def local_scan(x, w=7, H=14, W=14, flip=False, column_first=False):
+    """Local windowed scan in LocalMamba
+    Input: 
+        x: [B, L, C]
+        H, W: original width and height before padding
+        column_first: column-wise scan first (the additional direction in VMamba)
+    Return: [B, L, C]
+    """
+    B, L, C = x.shape
+    x = x.view(B, H, W, C)
+    Hg, Wg = math.ceil(H / w), math.ceil(W / w)
+    if H % w != 0 or W % w != 0:
+        newH, newW = Hg * w, Wg * w
+        x = F.pad(x, (0, 0, 0, newW - W, 0, newH - H))
+    if column_first:
+        x = x.view(B, Hg, w, Wg, w, C).permute(0, 3, 1, 4, 2, 5).reshape(B, -1, C)
+    else:
+        x = x.view(B, Hg, w, Wg, w, C).permute(0, 1, 3, 2, 4, 5).reshape(B, -1, C)
+    if flip:
+        x = x.flip([1])
+    return x
+
+
+def local_scan_bchw(x, w=7, H=14, W=14, flip=False, column_first=False):
+    """Local windowed scan in LocalMamba
+    Input: 
+        x: [B, C, H, W]
+        H, W: original width and height before padding
+        column_first: column-wise scan first (the additional direction in VMamba)
+    Return: [B, C, L]
+    """
+    B, C, _, _ = x.shape
+    x = x.view(B, C, H, W)
+    Hg, Wg = math.ceil(H / w), math.ceil(W / w)
+    if H % w != 0 or W % w != 0:
+        newH, newW = Hg * w, Wg * w
+        x = F.pad(x, (0, newW - W, 0, newH - H))
+    if column_first:
+        x = x.view(B, C, Hg, w, Wg, w).permute(0, 1, 4, 2, 5, 3).reshape(B, C, -1)
+    else:
+        x = x.view(B, C, Hg, w, Wg, w).permute(0, 1, 2, 4, 3, 5).reshape(B, C, -1)
+    if flip:
+        x = x.flip([-1])
+    return x
+
+
+def local_reverse(x, w=7, H=14, W=14, flip=False, column_first=False):
+    """Local windowed scan in LocalMamba
+    Input: 
+        x: [B, L, C]
+        H, W: original width and height before padding
+        column_first: column-wise scan first (the additional direction in VMamba)
+    Return: [B, L, C]
+    """
+    B, L, C = x.shape
+    Hg, Wg = math.ceil(H / w), math.ceil(W / w)
+    if flip:
+        x = x.flip([1])
+    if H % w != 0 or W % w != 0:
+        if column_first:
+            x = x.view(B, Wg, Hg, w, w, C).permute(0, 2, 4, 1, 3, 5).reshape(B, C, Hg * w, Wg * w)
+        else:
+            x = x.view(B, Hg, Wg, w, w, C).permute(0, 1, 3, 2, 4, 5).reshape(B, C, Hg * w, Wg * w)
+        x = x[:, :H, :W, :].reshape(B, -1, C)
+    else:
+        if column_first:
+            x = x.view(B, Wg, Hg, w, w, C).permute(0, 2, 4, 1, 3, 5).reshape(B, L, C)
+        else:
+            x = x.view(B, Hg, Wg, w, w, C).permute(0, 1, 3, 2, 4, 5).reshape(B, L, C)
+    return x
 
 
 SCAN_ZOO = {

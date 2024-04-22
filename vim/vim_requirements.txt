@@ -108,3 +108,4 @@ yapf==0.40.2
 yarl==1.9.4
 zipp==3.17.0
 torch-dct
+PyWavelets

@@ -508,7 +508,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-ckpt", type=str, default='')
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--learn-sigma", action="store_true")
-    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8'])
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--cond-mamba", action="store_true")
     parser.add_argument("--scanning-continuity", action="store_true")
     parser.add_argument("--enable-fourier-layers", action="store_true")
@@ -517,12 +517,11 @@ if __name__ == "__main__":
     parser.add_argument("--drop-path", type=float, default=0.)
     parser.add_argument("--use-final-norm", action="store_true")
     # parser.add_argument("--skip", action="store_true")
-
         
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--learnable-pe", action="store_true")
-    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
     parser.add_argument('--min-lr', type=float, default=1e-6,)
     parser.add_argument('--warmup-epochs', type=int, default=5,)
