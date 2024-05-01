@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name=jpeg # create a short name for your job
+#SBATCH --job-name=wave4 # create a short name for your job
 #SBATCH --output=/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurms/slurm_%A.out # create a output file
 #SBATCH --error=/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurms/slurm_%A.err # create a error file
 #SBATCH --partition=research # choose partition
@@ -19,7 +19,7 @@ set -e
 
 # export NCCL_SOCKET_IFNAME=bond0
 export NCCL_SOCKET_IFNAME=^docker0,lo
-export MASTER_PORT=10138
+export MASTER_PORT=10158
 export WORLD_SIZE=2
 NUM_GPUs=1
 
@@ -36,8 +36,13 @@ echo "NODELIST="${SLURM_NODELIST}
 export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
+module purge
+module load python/miniconda3/miniconda3
+eval "$(conda shell.bash hook)"
+conda activate ../envs/mamba
+
 TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-        --exp idiml2_linear_alterorders_celeb256_GVP_condmamba_zigmasetting_jpeg8_normf \
+        --exp idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscan \
         --model DiM-L/2 \
         --datadir ../data/celeba_256/celeba-lmdb/ \
         --dataset celeba_256 \
@@ -47,8 +52,8 @@ TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MAST
         --path-type GVP \
         --diffusion-form none \
         --lr 1e-4 \
-        --block-type linear \
-        --bimamba-type jpeg_8 \
+        --block-type combined \
+        --bimamba-type none \
         --cond-mamba \
         --eval-every 50 \
         --eval-nsamples 2_000 \
@@ -58,8 +63,8 @@ TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MAST
         --fused-add-norm \
         --drop-path 0.1 \
         --learnable-pe \
-        --enable-fourier-layers \
-        --use-final-norm \
+        # --enable-fourier-layers \
+        # --use-final-norm \
         # --use-blurring \
         # --blur-upscale 4 \
         # --blur-sigma-max 1 \

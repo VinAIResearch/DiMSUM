@@ -521,7 +521,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--learnable-pe", action="store_true")
-    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave", "combined", "window"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
     parser.add_argument('--min-lr', type=float, default=1e-6,)
     parser.add_argument('--warmup-epochs', type=int, default=5,)

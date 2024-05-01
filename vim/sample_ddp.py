@@ -168,7 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--label-dropout", type=float, default=-1)
 
-    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)

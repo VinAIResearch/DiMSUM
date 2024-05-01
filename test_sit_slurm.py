@@ -18,11 +18,10 @@ slurm_template = """#!/bin/bash -e
 #SBATCH --mail-user=v.haopt12@vinai.io
 #SBATCH --ntasks=1
 
-# module purge
-# module load python/miniconda3/miniconda3
-# eval "$(conda shell.bash hook)"
-# conda activate /lustre/scratch/client/vinai/users/ngocbh8/quan/envs/flow
-# cd /lustre/scratch/client/vinai/users/ngocbh8/quan/cnf_flow
+module purge
+module load python/miniconda3/miniconda3
+eval "$(conda shell.bash hook)"
+conda activate ../envs/mamba
 
 export MASTER_PORT={master_port}
 export WORLD_SIZE=1
@@ -53,8 +52,8 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --num-sampling-steps {num_steps} \
     --diffusion-form {diff_form} \
     --sample-dir samples/{exp} \
-    --block-type linear \
-    --bimamba-type zigma_8 \
+    --block-type combined \
+    --bimamba-type none \
     --eval-refdir {eval_refdir} \
     --eval-metric {eval_metric} \
     --cond-mamba \
@@ -78,16 +77,16 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
 
 ###### ARGS
 model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
-exp = "idiml2_gatedmlp_alterorders_celeb256_GVP_condmamba_zigmasetting_zigma8scan"
+exp = "idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscan"
 ckpt_root = f"results/{exp}/checkpoints/"
 real_data = "real_samples/celeba_256"
 eval_metric = "fid{num_samples}k_full,pr{num_samples}k3_full".format(num_samples="50")
-BASE_PORT = 18022
-num_gpus = 1
-device = "0,"
+BASE_PORT = 18024
+num_gpus = 2
+device = "0,3"
 
 config = pd.DataFrame({
-    "epochs": [225],
+    "epochs": [250],
     "num_steps": [250],
     "methods": ['dopri5'],
     "cfg_scale": [1.],
