@@ -24,6 +24,7 @@ def create_model(config):
             fused_add_norm=config.fused_add_norm,
             learnable_pe=config.learnable_pe,
             use_final_norm=config.use_final_norm,
+            use_attn_every_k_layers=config.use_attn_every_k_layers,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](

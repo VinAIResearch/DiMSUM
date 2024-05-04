@@ -259,6 +259,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--label-dropout", type=float, default=-1)
     parser.add_argument("--use-final-norm", action="store_true")
+    parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])

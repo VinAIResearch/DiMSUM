@@ -19,7 +19,7 @@ set -e
 
 # export NCCL_SOCKET_IFNAME=bond0
 export NCCL_SOCKET_IFNAME=^docker0,lo
-export MASTER_PORT=10158
+export MASTER_PORT=10161
 export WORLD_SIZE=2
 NUM_GPUs=1
 
@@ -42,7 +42,7 @@ eval "$(conda shell.bash hook)"
 conda activate ../envs/mamba
 
 TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-        --exp idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscan \
+        --exp idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4 \
         --model DiM-L/2 \
         --datadir ../data/celeba_256/celeba-lmdb/ \
         --dataset celeba_256 \
@@ -63,6 +63,7 @@ TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MAST
         --fused-add-norm \
         --drop-path 0.1 \
         --learnable-pe \
+        --use-attn-every-k-layers 4 \
         # --enable-fourier-layers \
         # --use-final-norm \
         # --use-blurring \

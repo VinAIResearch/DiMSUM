@@ -1493,8 +1493,8 @@ class DiMBlockCombined(nn.Module):
             drop_path=0.,
             fused_add_norm=False,
             residual_in_fp32=residual_in_fp32,
-            reverse=reverse,
-            transpose=False, # transpose, # disable if only left2right scanning is used
+            reverse=False,
+            transpose=reverse, # transpose, # disable if only left2right scanning is used
             scanning_continuity=scanning_continuity,
             no_ffn=True,
             c_dim=dim,
@@ -2127,6 +2127,9 @@ class DiM(nn.Module):
                     x, freq_residual = self.fourier_blocks[idx](x, freq_residual, c)
                 else:
                     x = self.fourier_blocks[idx](x)
+            
+            if self.use_attn_every_k_layers > 0 and (idx+1) % self.use_attn_every_k_layers == 0:
+                x = self.attn_block(x, c)
         
         if self.norm_f is not None:
             if not self.fused_add_norm:

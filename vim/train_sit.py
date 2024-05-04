@@ -516,6 +516,7 @@ if __name__ == "__main__":
     parser.add_argument("--fused-add-norm", action="store_true")
     parser.add_argument("--drop-path", type=float, default=0.)
     parser.add_argument("--use-final-norm", action="store_true")
+    parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
     # parser.add_argument("--skip", action="store_true")
         
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -526,6 +527,7 @@ if __name__ == "__main__":
     parser.add_argument('--min-lr', type=float, default=1e-6,)
     parser.add_argument('--warmup-epochs', type=int, default=5,)
     parser.add_argument('--max-grad-norm', type=float, default=2.,)
+
 
 
     group = parser.add_argument_group("Eval")
