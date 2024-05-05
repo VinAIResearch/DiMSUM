@@ -107,7 +107,7 @@ void set_conv_params_fwd_cond(ConvParamsBase &params,
                          const at::Tensor out,
                          void* bias_ptr,
                          bool silu_activation,
-                         const at::Tensor cond,
+                         const at::Tensor cond
                          ) {
 
     // Reset the parameters
@@ -125,7 +125,7 @@ void set_conv_params_fwd_cond(ConvParamsBase &params,
     params.weight_ptr = weight.data_ptr();
     params.bias_ptr = bias_ptr;
     params.out_ptr = out.data_ptr();
-    params.cond_ptr = cond.data_ptr();
+    // params.cond_ptr = cond.data_ptr();
     // All stride are in elements, not bytes.
     params.x_batch_stride = x.stride(0);
     params.x_c_stride = x.stride(1);
@@ -135,9 +135,9 @@ void set_conv_params_fwd_cond(ConvParamsBase &params,
     params.out_batch_stride = out.stride(0);
     params.out_c_stride = out.stride(1);
     params.out_l_stride = out.stride(-1);
-    params.cond_batch_stride = cond.stride(0);
-    params.cond_c_stride = cond.stride(1);
-    params.cond_l_stride = cond.stride(-1);
+    // params.cond_batch_stride = cond.stride(0);
+    // params.cond_c_stride = cond.stride(1);
+    // params.cond_l_stride = cond.stride(-1);
 }
 
 
@@ -192,7 +192,7 @@ void set_conv_params_bwd_cond(ConvParamsBwd &params,
                          void* dbias_ptr,
                          bool silu_activation,
                          const at::Tensor cond,
-                         const at::Tensor dcond,
+                         const at::Tensor dcond
                          ) {
     // Pass in "dout" instead of "out", we're not gonna use "out" at all.
     set_conv_params_fwd_cond(params, batch, dim, seqlen, width,
@@ -203,7 +203,7 @@ void set_conv_params_bwd_cond(ConvParamsBwd &params,
     params.dx_ptr = dx.data_ptr();
     params.dweight_ptr = dweight.data_ptr();
     params.dbias_ptr = dbias_ptr;
-    params.dcond_ptr = dcond.data_ptr();
+    // params.dcond_ptr = dcond.data_ptr();
     // All stride are in elements, not bytes.
     params.dout_batch_stride = dout.stride(0);
     params.dout_c_stride = dout.stride(1);
@@ -213,9 +213,9 @@ void set_conv_params_bwd_cond(ConvParamsBwd &params,
     params.dx_batch_stride = dx.stride(0);
     params.dx_c_stride = dx.stride(1);
     params.dx_l_stride = dx.stride(2);
-    params.dcond_batch_stride = dcond.stride(0);
-    params.dcond_c_stride = dcond.stride(1);
-    params.dcond_l_stride = dcond.stride(2);
+    // params.dcond_batch_stride = dcond.stride(0);
+    // params.dcond_c_stride = dcond.stride(1);
+    // params.dcond_l_stride = dcond.stride(2);
 }
 
 at::Tensor
@@ -432,7 +432,7 @@ causal_conv1d_bwd_cond(const at::Tensor &x, const at::Tensor &weight,
                   at::Tensor &dout,
                   c10::optional<at::Tensor> &dx_,
                   bool silu_activation,
-                  const at::Tensor &init_x,
+                  const at::Tensor &init_x
                   ) {
     auto input_type = x.scalar_type();
     auto weight_type = weight.scalar_type();
@@ -479,7 +479,7 @@ causal_conv1d_bwd_cond(const at::Tensor &x, const at::Tensor &weight,
     } else {
         dx = torch::empty_like(x);
     }
-    dcond = torch::empty_like(init_x);
+    at::Tensor dcond = init_x; // torch::empty_like(init_x);
 
     // Otherwise the kernel will be launched from cuda:0 device
     // Cast to char to avoid compiler warning about narrowing

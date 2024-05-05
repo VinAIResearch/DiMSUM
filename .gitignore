@@ -28,3 +28,6 @@ sample/
 real_samples/
 *.tar.gz
 vim/stabilityai/
+# images
+*.jpg
+*.png

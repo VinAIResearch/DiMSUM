@@ -60,7 +60,8 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --rms-norm \
     --fused-add-norm \
     --learnable-pe \
-    # --use-attn-every-k-layers 4 \
+    --use-attn-every-k-layers 4 \
+    --sample-dir samples_test \
     # --use-final-norm \
     # --enable-fourier-layers \
     # --scanning-continuity \
@@ -78,7 +79,7 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
 
 ###### ARGS
 model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
-exp = "idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscanlrandtb"
+exp = "idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscanlrandtb_attnevery4"
 ckpt_root = f"results/{exp}/checkpoints/"
 real_data = "real_samples/celeba_256"
 eval_metric = "fid{num_samples}k_full,pr{num_samples}k3_full".format(num_samples="50")
