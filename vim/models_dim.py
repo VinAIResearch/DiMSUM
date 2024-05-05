@@ -1008,7 +1008,7 @@ class WaveDiMBlock(nn.Module):
         h = w = int(np.sqrt(l))
         hidden_states = self._dwt(hidden_states).contiguous()
         column_first = True if self.transpose else False
-        hidden_states = local_scan(hidden_states, w=4, H=h, W=w, column_first=column_first).contiguous()
+        hidden_states = local_scan(hidden_states, w=w//4, H=h, W=w, column_first=column_first).contiguous() # Resolve fixed window size
         # if self.transpose:
         #     hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
         #     # residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
@@ -1053,7 +1053,7 @@ class WaveDiMBlock(nn.Module):
         # if self.transpose:
         #     hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
         #     # residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
-        hidden_states = local_reverse(hidden_states, w=4, H=h, W=w, column_first=column_first)
+        hidden_states = local_reverse(hidden_states, w=w//4, H=h, W=w, column_first=column_first)
         hidden_states = self._idwt(hidden_states).contiguous()
         
         return hidden_states, residual
@@ -2409,8 +2409,21 @@ def DiM_B_2(**kwargs):
         # residual_in_fp32=True,
         **kwargs)
 
+def DiM_L_4(**kwargs):
+    return DiM(depth=16, # 24, double 24 if use DiMBlockRaw
+        hidden_size=1024, 
+        patch_size=4, 
+        # scan_type="v2", 
+        initializer_cfg=None,
+        # fused_add_norm=False, 
+        # rms_norm=False, 
+        ssm_cfg=None, 
+        # residual_in_fp32=True,
+        **kwargs)
+
 DiM_models = {
     "DiM-XL/2": DiM_XL_2,
     "DiM-L/2": DiM_L_2,
     "DiM-B/2": DiM_B_2,
+    "DiM-L/4": DiM_L_4,
 }

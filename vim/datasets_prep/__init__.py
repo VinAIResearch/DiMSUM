@@ -23,9 +23,14 @@ def get_dataset(args):
                         transforms.ToTensor(),
                         transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5))]))
 
-    elif args.dataset == 'latent_imagenet_256':
-        dataset = LatentDataset(args.datadir, train=True, transform=transforms.Compose([
-                        transforms.RandomHorizontalFlip()]))
+    elif args.dataset.startswith('latent_imagenet'):
+        dataname = ['imagenet256', 'imagenet512']['512' in args.dataset]
+        dataset = LatentDataset('imagenet', features_dir=f"{args.datadir}/{dataname}_features", labels_dir=f"{args.datadir}/{dataname}_labels")
+    
+    elif args.dataset.startswith('latent_celeba'):
+        dataname = ['celebahq512', 'celebahq1024']['1024' in args.dataset]
+        feat_dir = f"{args.datadir}/{dataname}_features"
+        dataset = LatentDataset('celebhq', features_dir=feat_dir, labels_dir=None)
        
     elif args.dataset == 'lsun_church':
         train_transform = transforms.Compose([

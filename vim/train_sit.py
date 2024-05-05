@@ -280,6 +280,7 @@ def main(args):
         sample_model_kwargs = dict(y=ys)
         model_fn = ema.forward
 
+    use_latent = True if "latent" in args.dataset else False
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(init_epoch, args.epochs+1):
         sampler.set_epoch(epoch)
@@ -288,9 +289,10 @@ def main(args):
             # adjust_learning_rate(opt, i / len(loader) + epoch, args)
             x = x.to(device)
             y = None if not use_label else y.to(device)
-            with torch.no_grad():
-                # Map input images to latent space + normalize latents:
-                x = vae.encode(x).latent_dist.sample().mul_(0.18215)
+            if not use_latent:
+                with torch.no_grad():
+                    # Map input images to latent space + normalize latents:
+                    x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             model_kwargs = dict(y=y)
             before_forward = torch.cuda.memory_allocated(device)
             loss_dict = transport.training_losses(model, x, model_kwargs)
@@ -491,7 +493,7 @@ if __name__ == "__main__":
     parser.add_argument("--datadir", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--model", type=str, default="MambaDiffV1_XL_2")
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--image-size", type=int, choices=[256, 512, 1024], default=256)
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--num-classes", type=int, default=0)
     parser.add_argument("--cfg-scale", type=float, default=1.)
