@@ -41,7 +41,7 @@ Recently the state space models (SSMs) with efficient hardware-aware designs, i.
 
 - Python 3.10.13
 
-  - `conda create -n your_env_name python=3.10.13`
+  - `conda create -n your_env_name python=3.10.13 --file requirements.txt`
 
 - torch 2.1.1 + cu118
   - `pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu118`
@@ -52,8 +52,6 @@ Recently the state space models (SSMs) with efficient hardware-aware designs, i.
 - Install ``causal_conv1d`` and ``mamba``
   - `pip install -e causal_conv1d`
   - `pip install -e mamba`
-  
-  
 
 
 ## Train Your Vim
