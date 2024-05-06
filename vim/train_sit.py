@@ -265,7 +265,7 @@ def main(args):
     use_label = True if "imagenet" in args.dataset else False
 
     # Create sampling noise & label
-    sample_bs = 4
+    sample_bs = 2
     zs = torch.randn(sample_bs, 4, latent_size, latent_size, device=device)
     ys = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
     use_cfg = args.cfg_scale > 1.0
@@ -519,6 +519,7 @@ if __name__ == "__main__":
     parser.add_argument("--drop-path", type=float, default=0.)
     parser.add_argument("--use-final-norm", action="store_true")
     parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
+    parser.add_argument("--not-use-gated-mlp", action="store_true")
     # parser.add_argument("--skip", action="store_true")
         
     parser.add_argument("--lr", type=float, default=1e-4)

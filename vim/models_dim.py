@@ -204,6 +204,7 @@ class DiMBlock(nn.Module):
         transpose=False,
         scanning_continuity=False,
         skip=False,
+        use_gated_mlp=True,
     ):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
@@ -1452,6 +1453,7 @@ class DiMBlockCombined(nn.Module):
         reverse=False,
         transpose=False,
         scanning_continuity=False,
+        use_gated_mlp=True,
     ):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
@@ -1520,8 +1522,10 @@ class DiMBlockCombined(nn.Module):
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
         mlp_hidden_dim = int(dim * 4)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = GatedMLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
-        # self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        if use_gated_mlp:
+            self.mlp = GatedMLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        else:
+            self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
     def forward(
         self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None
@@ -1772,6 +1776,7 @@ class DiM(nn.Module):
         drop_path=0.,
         use_final_norm=False,
         use_attn_every_k_layers=-1,
+        use_gated_mlp=True,
     ):
         super().__init__()
         if block_type == "raw":
@@ -1869,6 +1874,7 @@ class DiM(nn.Module):
                     transpose=(scan_type =='none') and (i % 4 >= 2),
                     cond_mamba=cond_mamba,
                     scanning_continuity=scanning_continuity,
+                    use_gated_mlp=use_gated_mlp,
                     **block_kwargs,
                 )
                 for i in range(self.depth)
@@ -2276,6 +2282,7 @@ def create_block(
     cond_mamba=False, # conditional mode
     scanning_continuity=False,
     skip=False,
+    use_gated_mlp=True,
     **block_kwargs,
 ):
     if ssm_cfg is None:
@@ -2339,6 +2346,7 @@ def create_block(
                 reverse=reverse,
                 transpose=transpose,
                 scanning_continuity=scanning_continuity,
+                use_gated_mlp=use_gated_mlp,
             )
         else:
             block = DiMBlock(
@@ -2396,6 +2404,18 @@ def DiM_L_2(**kwargs):
         ssm_cfg=None, 
         # residual_in_fp32=True,
         **kwargs)
+
+def DiM_L_2_v1(**kwargs):
+    return DiM(depth=20, # 24, double 24 if use DiMBlockRaw
+        hidden_size=1024, 
+        patch_size=2, 
+        # scan_type="v2", 
+        initializer_cfg=None,
+        # fused_add_norm=False, 
+        # rms_norm=False, 
+        ssm_cfg=None, 
+        # residual_in_fp32=True,
+        **kwargs)
     
 def DiM_B_2(**kwargs):
     return DiM(depth=12, # 12, double 12 if use DiMBlockRaw
@@ -2421,9 +2441,23 @@ def DiM_L_4(**kwargs):
         # residual_in_fp32=True,
         **kwargs)
 
+def DiM_L_4_v1(**kwargs):
+    return DiM(depth=20, # 24, double 24 if use DiMBlockRaw
+        hidden_size=1024, 
+        patch_size=4,
+        # scan_type="v2", 
+        initializer_cfg=None,
+        # fused_add_norm=False, 
+        # rms_norm=False, 
+        ssm_cfg=None,
+        # residual_in_fp32=True,
+        **kwargs)
+
 DiM_models = {
     "DiM-XL/2": DiM_XL_2,
     "DiM-L/2": DiM_L_2,
+    "DiM-L/2-v1": DiM_L_2_v1,
     "DiM-B/2": DiM_B_2,
     "DiM-L/4": DiM_L_4,
+    "DiM-L/4-v1": DiM_L_4_v1,
 }

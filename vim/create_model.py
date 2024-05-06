@@ -25,6 +25,7 @@ def create_model(config):
             learnable_pe=config.learnable_pe,
             use_final_norm=config.use_final_norm,
             use_attn_every_k_layers=config.use_attn_every_k_layers,
+            use_gated_mlp=not config.not_use_gated_mlp,
         )
     elif "DiT" in config.model: 
         return DiT_models[config.model](

@@ -75,7 +75,7 @@ conda activate ../envs/mamba
         
 
 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-        --exp idiml4_combinedxcrossattn_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4 \
+        --exp idiml4_nogated_combinedxcrossattn_mlp_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4 \
         --model DiM-L/4 \
         --datadir ../data/features/ \
         --dataset latent_celeba_1024 \
@@ -98,6 +98,7 @@ torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_G
         --learnable-pe \
         --use-attn-every-k-layers 4 \
         --image-size 1024 \
+        --not-use-gated-mlp \
 
 
 # CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUS vim/train_sit.py \
