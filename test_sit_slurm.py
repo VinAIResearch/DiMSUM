@@ -52,16 +52,16 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --num-sampling-steps {num_steps} \
     --diffusion-form {diff_form} \
     --sample-dir samples/{exp} \
-    --block-type combined \
+    --block-type wave \
     --bimamba-type none \
     --eval-refdir {eval_refdir} \
     --eval-metric {eval_metric} \
-    --cond-mamba \
     --rms-norm \
     --fused-add-norm \
     --learnable-pe \
-    --use-attn-every-k-layers 4 \
-    --sample-dir samples_test \
+    --sample-dir samples \
+    --cond-mamba \
+    # --use-attn-every-k-layers 4 \
     # --use-final-norm \
     # --enable-fourier-layers \
     # --scanning-continuity \
@@ -79,13 +79,13 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
 
 ###### ARGS
 model_type = "DiM-L/2" # or "DiT-L/2" or "adm"
-exp = "idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscanlrandtb_attnevery4"
+exp = "idiml2_wave_alterorders_celeb256_GVP_condmamba_zigmasetting_nd"
 ckpt_root = f"results/{exp}/checkpoints/"
 real_data = "real_samples/celeba_256"
 eval_metric = "fid{num_samples}k_full,pr{num_samples}k3_full".format(num_samples="50")
-BASE_PORT = 18026
-num_gpus = 4
-device = "0,1,2,3"
+BASE_PORT = 18027
+num_gpus = 2
+device = "0,1"
 
 config = pd.DataFrame({
     "epochs": [250],

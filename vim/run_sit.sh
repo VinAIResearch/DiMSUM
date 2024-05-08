@@ -19,7 +19,7 @@ set -e
 
 # export NCCL_SOCKET_IFNAME=bond0
 export NCCL_SOCKET_IFNAME=^docker0,lo
-export MASTER_PORT=10161
+export MASTER_PORT=10169
 export WORLD_SIZE=2
 NUM_GPUs=4
 
@@ -41,20 +41,19 @@ module load python/miniconda3/miniconda3
 eval "$(conda shell.bash hook)"
 conda activate ../envs/mamba
 
-# TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-#         --exp idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4 \
+# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
+#         --exp idiml2_window_alterorders_celeb256_GVP_condmamba_zigmasetting_wscanlrandtb \
 #         --model DiM-L/2 \
 #         --datadir ../data/celeba_256/celeba-lmdb/ \
 #         --dataset celeba_256 \
 #         --num-classes 1 \
-#         --global-batch-size 32 \
+#         --global-batch-size 64 \
 #         --epochs 300 \
 #         --path-type GVP \
 #         --diffusion-form none \
 #         --lr 1e-4 \
-#         --block-type combined \
+#         --block-type window \
 #         --bimamba-type none \
-#         --cond-mamba \
 #         --eval-every 50 \
 #         --eval-nsamples 2_000 \
 #         --eval-bs 4 \
@@ -63,19 +62,18 @@ conda activate ../envs/mamba
 #         --fused-add-norm \
 #         --drop-path 0.1 \
 #         --learnable-pe \
-#         --use-attn-every-k-layers 4 \
+#         --cond-mamba \
+#         # --use-attn-every-k-layers 4 \
+#         # --not-use-gated-mlp \
 #         # --enable-fourier-layers \
 #         # --use-final-norm \
-#         # --use-blurring \
-#         # --blur-upscale 4 \
-#         # --blur-sigma-max 1 \
 #         # --t-sample-mode logitnormal \
 #         # --scanning-continuity \
 #         # --model-ckpt results/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/checkpoints/0000025.pt \
         
 
 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-        --exp idiml4_nogated_combinedxcrossattn_mlp_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4 \
+        --exp idiml4_combinedxcrossattn_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4_correct \
         --model DiM-L/4 \
         --datadir ../data/features/ \
         --dataset latent_celeba_1024 \
@@ -88,9 +86,9 @@ torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_G
         --block-type combined \
         --bimamba-type none \
         --cond-mamba \
-        --eval-every 50 \
+        --eval-every 1_000 \
         --eval-nsamples 2_000 \
-        --eval-bs 4 \
+        --eval-bs 2 \
         --eval-refdir ../data/data1024x1024/ \
         --rms-norm \
         --fused-add-norm \
@@ -98,7 +96,7 @@ torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_G
         --learnable-pe \
         --use-attn-every-k-layers 4 \
         --image-size 1024 \
-        --not-use-gated-mlp \
+        # --not-use-gated-mlp \
 
 
 # CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUS vim/train_sit.py \
