@@ -70,7 +70,7 @@ def main(mode, args):
     # Auto-download a pre-trained model or load a custom SiT checkpoint from train.py:
     ckpt_path = args.ckpt # or f"SiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
-    model.load_state_dict(state_dict, strict=False)
+    model.load_state_dict(state_dict, strict=True)
     model.eval()  # important!
     
     transport = create_transport(
@@ -170,6 +170,7 @@ def main(mode, args):
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
 
         samples = vae.decode(samples / 0.18215).sample
+        # samples = torch.cat([vae.decode(samples[i].unsqueeze(0)/0.18215).sample for i in range(samples.shape[0])], dim=0)
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
         # Save samples to disk as individual .jpg files
@@ -246,7 +247,7 @@ if __name__ == "__main__":
     parser.add_argument("--sample-dir", type=str, default="samples")
     parser.add_argument("--per-proc-batch-size", type=int, default=4)
     parser.add_argument("--num-fid-samples", type=int, default=50_000)
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--image-size", type=int, choices=[256, 512, 1024], default=256)
     parser.add_argument("--num-classes", type=int, default=1)
     parser.add_argument("--cfg-scale",  type=float, default=1.0)
     parser.add_argument("--num-sampling-steps", type=int, default=250)
@@ -264,7 +265,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
-    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave", "combined", "window"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave", 
+        "combined", "window", "combined_fourier", "combined_einfft"])
     parser.add_argument("--cond-mamba", action="store_true")
     parser.add_argument("--scanning-continuity", action="store_true")
     parser.add_argument("--enable-fourier-layers", action="store_true")

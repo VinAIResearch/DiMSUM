@@ -91,6 +91,34 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
     return emb
 
+# --------------------------------------------------------
+# Interpolate position embeddings for high-resolution
+# References:
+# DeiT: https://github.com/facebookresearch/deit
+# --------------------------------------------------------
+def interpolate_pos_embed(model, checkpoint_model):
+    if 'pos_embed' in checkpoint_model:
+        pos_embed_checkpoint = checkpoint_model['pos_embed']
+        embedding_size = pos_embed_checkpoint.shape[-1]
+        num_patches = model.x_embedder.num_patches
+        num_extra_tokens = model.pos_embed.shape[-2] - num_patches
+        # height (== width) for the checkpoint position embedding
+        orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
+        # height (== width) for the new position embedding
+        new_size = int(num_patches ** 0.5)
+        # class_token and dist_token are kept unchanged
+        if orig_size != new_size:
+            print("Position interpolate from %dx%d to %dx%d" % (orig_size, orig_size, new_size, new_size))
+            extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
+            # only the position tokens are interpolated
+            pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
+            pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
+            pos_tokens = torch.nn.functional.interpolate(
+                pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
+            pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
+            new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
+            checkpoint_model['pos_embed'] = new_pos_embed
+
 #################################################################################
 #               Embedding Layers for Timesteps and Class Labels                 #
 #################################################################################
@@ -1275,7 +1303,6 @@ class FourierBlockv2(nn.Module):
     def __init__(
         self,
         dim,
-        length,
         mixer_cls, 
         fused_add_norm=False, 
         residual_in_fp32=False, 
@@ -1298,6 +1325,7 @@ class FourierBlockv2(nn.Module):
         self.reverse = reverse
         self.transpose = transpose
         self.scanning_continuity = scanning_continuity
+        self.no_ffn = no_ffn
         c_dim = dim if c_dim is None else c_dim
 
         self.norm = norm_cls(dim)
@@ -1319,11 +1347,14 @@ class FourierBlockv2(nn.Module):
             self.mlp = GatedMLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
             # self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
 
-        # grid_size = int(math.sqrt(length))
-        # path_gen_fn = SCAN_ZOO['jpeg']
-        # self.register_buffer('zigzag_path', torch.from_numpy(path_gen_fn(N=grid_size)))
-        # self.register_buffer('zigzag_path_reverse', torch.from_numpy(reverse_permut_np(self.zigzag_path)))
-    
+        
+        reserve_kernel = dct_size # (dct_size + 1) // 2 # redundancy reduction by a half
+        reserve_size = (reserve_kernel) ** 2 # conv
+        self.reserve_kernel = reserve_kernel
+
+        self.dct_conv = init_dct_kernel(dim, dct_size, reserve_kernel)
+        self.idct_conv = nn.Sequential(init_idct_kernel(dim, dct_size, reserve_kernel), nn.PixelShuffle(dct_size))
+
     def forward(self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None):
         if not self.fused_add_norm:
             if residual is None:
@@ -1331,7 +1362,7 @@ class FourierBlockv2(nn.Module):
             else:
                 residual = residual + self.drop_path(hidden_states)
 
-            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+            hidden_states = self.norm(residual) if isinstance(self.norm, nn.Identity) else self.norm(residual.to(dtype=self.norm.weight.dtype))
             if self.residual_in_fp32:
                 residual = residual.to(torch.float32)
         else:
@@ -1360,12 +1391,13 @@ class FourierBlockv2(nn.Module):
 
         hidden_size = int(math.sqrt(hidden_states.size(1)))
         ### 2D DCT
-        # h = dct_2d(rearrange(hidden_states, "b (h w) d -> b d h w", h=hidden_size), 
-        #     self.dct_size, norm='ortho', keeps_size=True) # (B, L, D)
-        # h = rearrange(h, "b d h w -> b (h w) d").contiguous()
-        h = dct_2d(rearrange(hidden_states, "b l (h w) -> b l h w", 
-            h=self.num_blocks), self.block_size, norm='ortho')
-        h = rearrange(h, "b l h w -> b l (h w)")
+        h = rearrange(hidden_states, "b (h w) d -> b d h w", h=hidden_size)
+        h = self.dct_conv(h)
+        h = rearrange(h, "b (c p1 p2) h w -> b (h p1 w p2) c", c=hidden_states.size(-1), p1=self.reserve_kernel).contiguous()
+        # h = dct_2d(rearrange(hidden_states, "b l (h w) -> b l h w", 
+        #     h=self.num_blocks), self.block_size, norm='ortho')
+        # h = rearrange(h, "b l h w -> b l (h w)").contiguous()
+
 
         # ### 1D DCT
         # h = dct(rearrange(hidden_states, "b l d -> b d l"), norm='ortho') # (B, L, D)
@@ -1387,13 +1419,13 @@ class FourierBlockv2(nn.Module):
 
         if not self.no_ffn:
             shift_ssm, scale_ssm, gate_ssm, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-            # hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
-            hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), c, inference_params=inference_params)
-            hidden_states = hidden_states + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm_2(hidden_states), shift_mlp, scale_mlp))
+            # h = h + gate_ssm.unsqueeze(1) * self.mixer(modulate(h, shift_ssm, scale_ssm), inference_params=inference_params)
+            h = h + gate_ssm.unsqueeze(1) * self.mixer(modulate(h, shift_ssm, scale_ssm), c, inference_params=inference_params)
+            h = h + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm_2(h), shift_mlp, scale_mlp))
         else:
             shift_ssm, scale_ssm, gate_ssm = self.adaLN_modulation(c).chunk(3, dim=1)
-            # hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), inference_params=inference_params)
-            hidden_states = hidden_states + gate_ssm.unsqueeze(1) * self.mixer(modulate(hidden_states, shift_ssm, scale_ssm), c, inference_params=inference_params)
+            # h = h + gate_ssm.unsqueeze(1) * self.mixer(modulate(h, shift_ssm, scale_ssm), inference_params=inference_params)
+            h = h + gate_ssm.unsqueeze(1) * self.mixer(modulate(h, shift_ssm, scale_ssm), c, inference_params=inference_params)
 
         # _perm_rev = self.zigzag_path_reverse
         # h = torch.gather(h, 1, _perm_rev[None, :, None].expand_as(h))  
@@ -1417,9 +1449,17 @@ class FourierBlockv2(nn.Module):
         #     p1=1, #hidden_size//self.dct_size, 
         #     p2=1, #hidden_size//self.dct_size, 
         # )
-        out = idct_2d(rearrange(h, "b l (h w) -> b l h w", h=self.num_blocks), self.block_size, norm='ortho').to(dtype=torch.float32)
+        # out = idct_2d(rearrange(h, "b l (h w) -> b l h w", h=self.num_blocks), self.block_size, norm='ortho').to(dtype=torch.float32)
         # out = rearrange(out, "b c h w -> b (h w) c").contiguous() # [B, L, D]
-        out = rearrange(out, "b l h w -> b l (h w)").contiguous() # [B, L, D]
+        # out = rearrange(out, "b l h w -> b l (h w)").contiguous() # [B, L, D]
+
+        h = rearrange(h, "b (h p1 w p2) c -> b (c p1 p2) h w", 
+            c=hidden_states.size(-1), 
+            p1=self.reserve_kernel, 
+            p2=self.reserve_kernel,
+            h=hidden_size//self.reserve_kernel).contiguous()
+        out = self.idct_conv(h)
+        out = rearrange(out, "b c h w -> b (h w) c")
 
         # ### 1D DCT
         # h = rearrange(h, "b l d -> b d l")
@@ -1538,6 +1578,171 @@ class DiMBlockCombined(nn.Module):
             scanning_continuity=scanning_continuity,
             no_ffn=True,
             c_dim=dim,
+            num_wavelet_lv=2, #NOTE: remember to set=2 as default
+        )
+
+        ##NOTE: just for test
+        # self.freq_mamba = WaveDiMBlock(
+        #     dim//2,
+        #     mixer_cls,
+        #     norm_cls=nn.Identity,
+        #     drop_path=0.,
+        #     fused_add_norm=False,
+        #     residual_in_fp32=residual_in_fp32,
+        #     reverse=reverse,
+        #     transpose=transpose, # transpose, # disable if only left2right scanning is used
+        #     scanning_continuity=scanning_continuity,
+        #     no_ffn=True,
+        #     c_dim=dim,
+        #     num_wavelet_lv=2, #NOTE: remember to set=2 as default
+        #     window_scan=False,
+        # )
+
+        # self.proj = nn.Linear(dim, dim)
+        # self.proj = Attention(dim, num_heads=8, qkv_bias=True)
+        # self.proj = nn.Sequential(
+        #     nn.Linear(dim, dim),
+        #     Attention(dim, num_heads=8, qkv_bias=True)
+        # )
+        self.proj = CrossAttentionFusion(dim, num_heads=8, qkv_bias=True, swap_k=False) #NOTE: set swap_k=False
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        if self.fused_add_norm:
+            assert RMSNorm is not None, "RMSNorm import fails"
+            assert isinstance(
+                self.norm, (nn.LayerNorm, RMSNorm)
+            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
+
+        self.norm_2 = norm_cls(dim)
+
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim, bias=True))
+        mlp_hidden_dim = int(dim * 4)
+        approx_gelu = lambda: nn.GELU(approximate="tanh")
+        if use_gated_mlp:
+            self.mlp = GatedMLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        else:
+            self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+
+    def forward(
+        self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None
+    ):
+        r"""Pass the input through the encoder layer.
+
+        Args:
+            hidden_states: the sequence to the encoder layer (required).
+            residual: hidden_states = Mixer(LN(residual))
+
+        """
+        if not self.fused_add_norm:
+            if residual is None:
+                residual = hidden_states
+            else:
+                residual = residual + self.drop_path(hidden_states)
+
+            hidden_states = self.norm(residual.to(dtype=self.norm.weight.dtype))
+            if self.residual_in_fp32:
+                residual = residual.to(torch.float32)
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+            if residual is None:
+                hidden_states, residual = fused_add_norm_fn(
+                    hidden_states,
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )
+            else:
+                hidden_states, residual = fused_add_norm_fn(
+                    self.drop_path(hidden_states),
+                    self.norm.weight,
+                    self.norm.bias,
+                    residual=residual,
+                    prenorm=True,
+                    residual_in_fp32=self.residual_in_fp32,
+                    eps=self.norm.eps,
+                )    
+
+        x1, x2 = hidden_states.chunk(2, dim=2)
+        x1, _ = self.spatial_mamba(x1, None, c, inference_params)
+        x2, _ = self.freq_mamba(x2, None, c, inference_params)
+        if isinstance(self.proj, CrossAttentionFusion):
+            x = self.proj(x1, x2)
+        else:
+            x = torch.cat((x1, x2), dim=2)
+            x = self.proj(x)
+
+        # FFN
+        hidden_states = hidden_states + x
+        shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(3, dim=1)
+        hidden_states = hidden_states + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm_2(hidden_states), shift_mlp, scale_mlp))
+
+        return hidden_states, residual
+
+
+class DiMBlockCombinedFourier(nn.Module):
+    def __init__(
+        self, 
+        dim, 
+        mixer_cls, 
+        mixer_cls_2, 
+        norm_cls=nn.LayerNorm, 
+        fused_add_norm=False, 
+        residual_in_fp32=False, 
+        drop_path=0.,
+        reverse=False,
+        transpose=False,
+        scanning_continuity=False,
+        use_gated_mlp=True,
+    ):
+        """
+        Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
+
+        This Block has a slightly different structure compared to a regular
+        prenorm Transformer block.
+        The standard block is: LN -> MHA/MLP -> Add.
+        [Ref: https://arxiv.org/abs/2002.04745]
+        Here we have: Add -> LN -> Mixer, returning both
+        the hidden_states (output of the mixer) and the residual.
+        This is purely for performance reasons, as we can fuse add and LayerNorm.
+        The residual needs to be provided (except for the very first block).
+        """
+        super().__init__()
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.reverse = reverse
+        self.transpose = transpose
+        self.scanning_continuity = scanning_continuity
+
+        self.norm = norm_cls(dim)
+        self.spatial_mamba = DiMBlockRaw(
+            dim//2,
+            mixer_cls,
+            norm_cls=nn.Identity,
+            drop_path=0.,
+            fused_add_norm=False,
+            residual_in_fp32=residual_in_fp32,
+            reverse=reverse,
+            transpose=transpose,
+            scanning_continuity=scanning_continuity,
+            c_dim=dim,
+        )
+
+        self.freq_mamba = FourierBlockv2(
+            dim//2,
+            mixer_cls_2,
+            norm_cls=nn.Identity,
+            drop_path=0.,
+            fused_add_norm=False,
+            residual_in_fp32=residual_in_fp32,
+            reverse=False,
+            transpose=False,
+            scanning_continuity=scanning_continuity,
+            no_ffn=True,
+            c_dim=dim,
+            dct_size=4,
         )
 
         # self.proj = nn.Linear(dim, dim)
@@ -1624,7 +1829,7 @@ class DiMBlockCombined(nn.Module):
         return hidden_states, residual
 
 
-class DiMBlockCombinedFourier(nn.Module):
+class DiMBlockCombinedEinFFT(nn.Module):
     def __init__(
         self, 
         dim, 
@@ -1671,56 +1876,8 @@ class DiMBlockCombinedFourier(nn.Module):
             c_dim=dim,
         )
 
-        grid_size = 16 #NOTE: fixed
-        block_kwargs = {}
-        def gen_paths(N, path_type, num_paths, scan_type):
-            path_gen_fn = SCAN_ZOO[path_type]
-            zz_paths = path_gen_fn(N)[:num_paths]
-            
-            zz_paths_rev = [reverse_permut_np(x) for x in zz_paths]
-            zz_paths = [torch.from_numpy(x)[None,] for x in zz_paths]
-            zz_paths_rev = [torch.from_numpy(x)[None,] for x in zz_paths_rev]
-            zz_paths = torch.cat(zz_paths * self.depth, dim=0)
-            zz_paths_rev = torch.cat(zz_paths_rev * self.depth, dim=0)
-
-            assert len(zz_paths) == len(
-                zz_paths_rev
-            ), f"{len(zz_paths)} != {len(zz_paths_rev)}"
-            return zz_paths, zz_paths_rev
-            
-        if (
-            scan_type.startswith("zigma")
-            or scan_type.startswith("sweep")
-            or scan_type.startswith("jpeg")
-        ):
-            path_type = scan_type.split("_")[0]
-            num_paths = int(scan_type.split("_")[1])
-            zz_paths, zz_paths_rev = gen_paths(grid_size, path_type, num_paths)
-            block_kwargs["zigzag_paths"] = zz_paths
-            block_kwargs["zigzag_paths_reverse"] = zz_paths_rev
-
-        dct_size = [16,8,4,1][2]
-        path_type = 'jpeg'
-        num_paths = 2
-        zz_paths, zz_paths_rev = gen_paths(grid_size, path_type, num_paths)
-        fourier_block_kwargs = {}
-        fourier_block_kwargs["zigzag_paths"] = zz_paths
-        fourier_block_kwargs["zigzag_paths_reverse"] = zz_paths_rev
-        mixer_cls2 = partial(CondMamba, layer_idx=mixer_cls.layer_idx, scan_type=f"{path_type}-{num_paths}", d_cond=hidden_size, **fourier_block_kwargs)
-
-        self.freq_mamba = FourierBlockv2(
+        self.freq_mamba = EinFFT(
             dim//2,
-            mixer_cls,
-            norm_cls=nn.Identity,
-            drop_path=0.,
-            fused_add_norm=False,
-            residual_in_fp32=residual_in_fp32,
-            reverse=False,
-            transpose=False,
-            scanning_continuity=scanning_continuity,
-            no_ffn=True,
-            c_dim=dim,
-            dct_size=dct_size,
         )
 
         # self.proj = nn.Linear(dim, dim)
@@ -1792,7 +1949,7 @@ class DiMBlockCombinedFourier(nn.Module):
 
         x1, x2 = hidden_states.chunk(2, dim=2)
         x1, _ = self.spatial_mamba(x1, None, c, inference_params)
-        x2, _ = self.freq_mamba(x2, None, c, inference_params)
+        x2 = self.freq_mamba(x2)
         if isinstance(self.proj, CrossAttentionFusion):
             x = self.proj(x1, x2)
         else:
@@ -2000,6 +2157,7 @@ class DiM(nn.Module):
         use_final_norm=False,
         use_attn_every_k_layers=-1,
         use_gated_mlp=True,
+        use_independent_attn=False,
     ):
         super().__init__()
         if block_type == "raw":
@@ -2017,6 +2175,12 @@ class DiM(nn.Module):
         self.residual_in_fp32 = residual_in_fp32
         self.add_before = False
         self.use_attn_every_k_layers = use_attn_every_k_layers
+        #NOTE: for test only
+        # use_independent_attn = True
+        self.use_independent_attn = use_independent_attn
+        if self.use_independent_attn:
+            num_transformer_blocks = self.depth // use_attn_every_k_layers - 1
+            self.depth = self.depth - self.depth // use_attn_every_k_layers
 
         # using rotary embedding
         self.pe_type = pe_type
@@ -2043,8 +2207,9 @@ class DiM(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         grid_size = int(math.sqrt(num_patches))
-        block_kwargs = {}
-        def gen_paths(N, path_type, num_paths):
+        def gen_paths(N, scan_type):
+            path_type = scan_type.split("_")[0]
+            num_paths = int(scan_type.split("_")[1])
             path_gen_fn = SCAN_ZOO[path_type]
             zz_paths = path_gen_fn(N)[:num_paths]
             
@@ -2057,18 +2222,22 @@ class DiM(nn.Module):
             assert len(zz_paths) == len(
                 zz_paths_rev
             ), f"{len(zz_paths)} != {len(zz_paths_rev)}"
-            return zz_paths, zz_paths_rev
             
+            block_kwargs = {}
+            block_kwargs["zigzag_paths"] = zz_paths
+            block_kwargs["zigzag_paths_reverse"] = zz_paths_rev
+            block_kwargs["scan_type"] = scan_type
+            return block_kwargs
+
         if (
             scan_type.startswith("zigma")
             or scan_type.startswith("sweep")
             or scan_type.startswith("jpeg")
         ):
-            path_type = scan_type.split("_")[0]
-            num_paths = int(scan_type.split("_")[1])
-            zz_paths, zz_paths_rev = gen_paths(grid_size, path_type, num_paths)
-            block_kwargs["zigzag_paths"] = zz_paths
-            block_kwargs["zigzag_paths_reverse"] = zz_paths_rev
+            block_kwargs = gen_paths(grid_size, scan_type)
+        else:
+            block_kwargs = {}
+        block_kwargs2 = gen_paths(grid_size, "jpeg_2") # NOTE: fixed
 
         self.blocks = nn.ModuleList(
             [
@@ -2094,11 +2263,12 @@ class DiM(nn.Module):
                     # transpose=(i % 2 > 0),
                     # alternate orders (each ssm handle one order)
                     reverse=(scan_type =='none') and (i % 2 > 0),
-                    transpose=(scan_type =='none') and (i % 4 >= 2),
+                    transpose=(scan_type =='none') and (i % 4 >= 2), #NOTE: default (scan_type =='none') and (i % 4 >= 2)
                     cond_mamba=cond_mamba,
                     scanning_continuity=scanning_continuity,
                     use_gated_mlp=use_gated_mlp,
-                    **block_kwargs,
+                    block_kwargs=block_kwargs,
+                    block_kwargs2=block_kwargs2,
                 )
                 for i in range(self.depth)
             ]
@@ -2213,7 +2383,13 @@ class DiM(nn.Module):
             )
 
         if self.use_attn_every_k_layers > 0:
-            self.attn_block = DiTBlock(hidden_size, 16, use_gated_mlp=use_gated_mlp)
+            if self.use_independent_attn:
+                self.attn_block = nn.ModuleList([
+                    DiTBlock(hidden_size, 16, use_gated_mlp=use_gated_mlp)
+                    for i in range(num_transformer_blocks)
+                ])
+            else:
+                self.attn_block = DiTBlock(hidden_size, 16, use_gated_mlp=use_gated_mlp)
         
         self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
             hidden_size, eps=1e-5,
@@ -2358,7 +2534,11 @@ class DiM(nn.Module):
                     x = self.fourier_blocks[idx](x)
             
             if self.use_attn_every_k_layers > 0 and (idx+1) % self.use_attn_every_k_layers == 0:
-                x = self.attn_block(x, c)
+                if self.use_independent_attn:
+                    attn_idx = int((idx+1)//self.use_attn_every_k_layers - 1)
+                    x = self.attn_block[attn_idx](x, c)
+                else:
+                    x = self.attn_block(x, c)
         
         if self.norm_f is not None:
             if not self.fused_add_norm:
@@ -2506,7 +2686,8 @@ def create_block(
     scanning_continuity=False,
     skip=False,
     use_gated_mlp=True,
-    **block_kwargs,
+    block_kwargs={},
+    block_kwargs2={},
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -2539,11 +2720,11 @@ def create_block(
                 drop_path=drop_path,
                 fused_add_norm=fused_add_norm,
                 residual_in_fp32=residual_in_fp32,
-                reverse=False,
-                transpose=reverse,
+                reverse=reverse,
+                transpose=transpose,
                 scanning_continuity=scanning_continuity,
                 skip=skip,
-                window_scan=True,
+                window_scan=False,
             )
         elif block_type == "window":
             block = DiMBlockWindow(
@@ -2573,7 +2754,22 @@ def create_block(
                 use_gated_mlp=use_gated_mlp,
             )
         elif block_type == "combined_fourier":
+            mixer_cls_2 = partial(CondMamba, layer_idx=layer_idx, d_cond=d_model, **ssm_cfg, **block_kwargs2, **factory_kwargs)
             block = DiMBlockCombinedFourier(
+                d_model,
+                mixer_cls,
+                mixer_cls_2,
+                norm_cls=norm_cls,
+                drop_path=drop_path,
+                fused_add_norm=fused_add_norm,
+                residual_in_fp32=residual_in_fp32,
+                reverse=reverse,
+                transpose=transpose,
+                scanning_continuity=scanning_continuity,
+                use_gated_mlp=use_gated_mlp,
+            )
+        elif block_type == "combined_einfft":
+            block = DiMBlockCombinedEinFFT(
                 d_model,
                 mixer_cls,
                 norm_cls=norm_cls,

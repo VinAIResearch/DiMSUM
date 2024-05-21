@@ -15,6 +15,26 @@ from transport import create_transport, Sampler
 import argparse
 import sys
 from time import time
+import numpy as np 
+from tqdm import tqdm
+
+
+class NFECount(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.register_buffer("nfe", torch.tensor(0.0))
+
+    def forward(self, x, t, *args, **kwargs):
+        self.nfe += 1.0
+        return self.model(x, t, *args, **kwargs)
+
+    def forward_with_cfg(self, x, t, *args, **kwargs):
+        self.nfe += 1.0
+        return self.model.forward_with_cfg(x, t, *args, **kwargs)
+    
+    def reset_nfe(self):
+        self.nfe = 0
 
 
 def main(mode, args):
@@ -31,6 +51,10 @@ def main(mode, args):
     state_dict = find_model(ckpt_path)
     model.load_state_dict(state_dict)
     model.eval()  # important!
+
+    if args.compute_nfe:
+        # model.count_nfe = True
+        model = NFECount(model).to(device) # count wrapper
 
     transport = create_transport(
         args.path_type,
@@ -92,6 +116,41 @@ def main(mode, args):
     else:
         model_kwargs = dict(y=y)
         model_fn = model.forward 
+    
+    if args.compute_nfe:
+        print("Compute nfe")
+        average_nfe = 0.0
+        num_trials = 30
+        for i in tqdm(range(num_trials)):
+            _ = sample_fn(z, model_fn, **model_kwargs)[-1]
+            average_nfe += model.nfe / num_trials
+            model.reset_nfe()
+        print(f"Average NFE over {num_trials} trials: {int(average_nfe)}")
+        exit(0)
+
+    if args.measure_time:
+        print("Measure time")
+        # INIT LOGGERS
+        starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        repetitions = 30
+        timings = np.zeros((repetitions, 1))
+        # GPU-WARM-UP
+        for _ in range(10):
+            _ = model_fn(z, torch.ones((n), device=device), **model_kwargs)
+        # MEASURE PERFORMANCE
+        with torch.no_grad():
+            for rep in tqdm(range(repetitions)):
+                starter.record()
+                _ = sample_fn(z, model_fn, **model_kwargs)[-1]
+                ender.record()
+                # WAIT FOR GPU SYNC
+                torch.cuda.synchronize()
+                curr_time = starter.elapsed_time(ender)
+                timings[rep] = curr_time
+        mean_syn = np.sum(timings) / repetitions
+        std_syn = np.std(timings)
+        print("Inference time: {:.2f}+/-{:.2f}ms".format(mean_syn, std_syn))
+        exit(0)
 
     # Sample images:
     start_time = time()
@@ -138,10 +197,14 @@ if __name__ == "__main__":
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--label-dropout", type=float, default=-1)
+    parser.add_argument("--use-final-norm", action="store_true")
+    parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
+    parser.add_argument("--not-use-gated-mlp", action="store_true")
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
-    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave", "combined", "window"])
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave", 
+        "combined", "window", "combined_fourier", "combined_einfft"])
     parser.add_argument("--cond-mamba", action="store_true")
     parser.add_argument("--scanning-continuity", action="store_true")
     parser.add_argument("--enable-fourier-layers", action="store_true")
@@ -149,7 +212,8 @@ if __name__ == "__main__":
     parser.add_argument("--fused-add-norm", action="store_true")
     parser.add_argument("--drop-path", type=float, default=0.)
     parser.add_argument("--learnable-pe", action="store_true")
-    parser.add_argument("--use-final-norm", action="store_true")
+    parser.add_argument("--measure-time", action="store_true")
+    parser.add_argument("--compute-nfe", action="store_true")
 
     group = parser.add_argument_group("MoE arguments")
     group.add_argument("--num-moe-experts", type=int, default=8)

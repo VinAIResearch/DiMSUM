@@ -19,9 +19,9 @@ set -e
 
 # export NCCL_SOCKET_IFNAME=bond0
 export NCCL_SOCKET_IFNAME=^docker0,lo
-export MASTER_PORT=10169
-export WORLD_SIZE=2
-NUM_GPUs=4
+export MASTER_PORT=10180
+export WORLD_SIZE=4
+NUM_GPUs=8
 
 SLURM_JOB_NODELIST=$(scontrol show hostnames $SLURM_JOB_NODELIST | tr '\n' ' ')
 SLURM_NODELIST=$SLURM_JOB_NODELIST
@@ -42,7 +42,7 @@ eval "$(conda shell.bash hook)"
 conda activate ../envs/mamba
 
 # torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-#         --exp idiml2_window_alterorders_celeb256_GVP_condmamba_zigmasetting_wscanlrandtb \
+#         --exp idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_sweep4wave \
 #         --model DiM-L/2 \
 #         --datadir ../data/celeba_256/celeba-lmdb/ \
 #         --dataset celeba_256 \
@@ -52,7 +52,7 @@ conda activate ../envs/mamba
 #         --path-type GVP \
 #         --diffusion-form none \
 #         --lr 1e-4 \
-#         --block-type window \
+#         --block-type combined \
 #         --bimamba-type none \
 #         --eval-every 50 \
 #         --eval-nsamples 2_000 \
@@ -63,23 +63,85 @@ conda activate ../envs/mamba
 #         --drop-path 0.1 \
 #         --learnable-pe \
 #         --cond-mamba \
-#         # --use-attn-every-k-layers 4 \
-#         # --not-use-gated-mlp \
-#         # --enable-fourier-layers \
-#         # --use-final-norm \
-#         # --t-sample-mode logitnormal \
-#         # --scanning-continuity \
-#         # --model-ckpt results/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/checkpoints/0000025.pt \
+#         --use-attn-every-k-layers 4 \
+
+# #         # --not-use-gated-mlp \
+# #         # --enable-fourier-layers \
+# #         # --use-final-norm \
+# #         # --t-sample-mode logitnormal \
+# #         # --scanning-continuity \
+# #         # --model-ckpt results/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/checkpoints/0000025.pt \
         
 
+# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit_fp16.py \
+#         --exp idiml2_combinedxcrossattn_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4_correct_resume_from_DiM-L4 \
+#         --model DiM-L/2 \
+#         --datadir ../data/features/ \
+#         --dataset latent_celeba_1024 \
+#         --num-classes 1 \
+#         --global-batch-size 16 \
+#         --epochs 100 \
+#         --path-type GVP \
+#         --diffusion-form none \
+#         --lr 1e-5 \
+#         --block-type combined \
+#         --bimamba-type none \
+#         --cond-mamba \
+#         --eval-every 1_000 \
+#         --eval-nsamples 2_000 \
+#         --eval-bs 2 \
+#         --eval-refdir ../data/data1024x1024/ \
+#         --rms-norm \
+#         --fused-add-norm \
+#         --drop-path 0.1 \
+#         --learnable-pe \
+#         --use-attn-every-k-layers 4 \
+#         --image-size 1024 \
+#         --ckpt-every 5 \
+#         --model-ckpt results/idiml4_combinedxcrossattn_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4_correct/checkpoints/0000275.pt \
+#         # --not-use-gated-mlp \
+
+# accelerate launch --mixed_precision="bf16" --num_processes=4 --main_process_port=$MASTER_PORT vim/train_sit_fp16.py \
+#         --exp idiml2_combinedxcrossattn_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4_correct_resume_from_DiM-L4_t3 \
+#         --model DiM-L/2 \
+#         --datadir ../data/features/ \
+#         --dataset latent_celeba_1024 \
+#         --num-classes 1 \
+#         --global-batch-size 16 \
+#         --epochs 150 \
+#         --path-type GVP \
+#         --diffusion-form none \
+#         --lr 1e-4 \
+#         --block-type combined \
+#         --bimamba-type none \
+#         --cond-mamba \
+#         --eval-every 1_000 \
+#         --eval-nsamples 2_000 \
+#         --eval-bs 2 \
+#         --eval-refdir ../data/data1024x1024/ \
+#         --rms-norm \
+#         --fused-add-norm \
+#         --drop-path 0.2 \
+#         --learnable-pe \
+#         --use-attn-every-k-layers 4 \
+#         --image-size 1024 \
+#         --ckpt-every 5 \
+#         --max-grad-norm 1 \
+#         --model-ckpt results/idiml4_combinedxcrossattn_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4_correct/checkpoints/0000275.pt \
+#         # --resume \
+#         # --not-use-gated-mlp \
+
+
+# CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 
 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
-        --exp idiml4_combinedxcrossattn_alterorders_latentceleb1024_GVP_condmamba_zigmasetting_nd4_wscanlrandtb_attnevery4_correct \
-        --model DiM-L/4 \
+        --exp latent_imagenet_256_tuned_from_epoch173 \
+        --model DiM-L/2 \
         --datadir ../data/features/ \
-        --dataset latent_celeba_1024 \
-        --num-classes 1 \
-        --global-batch-size 32 \
-        --epochs 500 \
+        --dataset latent_imagenet256 \
+        --num-classes 1000 \
+        --global-batch-size 256 \
+        --image-size 256 \
+        --epochs 800 \
         --path-type GVP \
         --diffusion-form none \
         --lr 1e-4 \
@@ -88,42 +150,18 @@ torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_G
         --cond-mamba \
         --eval-every 1_000 \
         --eval-nsamples 2_000 \
-        --eval-bs 2 \
-        --eval-refdir ../data/data1024x1024/ \
+        --eval-bs 4 \
+        --eval-refdir real_samples/imagenet_256/ \
         --rms-norm \
         --fused-add-norm \
-        --drop-path 0.1 \
+        --drop-path 0.2 \
+        --label-dropout 0.15 \
         --learnable-pe \
         --use-attn-every-k-layers 4 \
-        --image-size 1024 \
-        # --not-use-gated-mlp \
-
-
-# CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUS vim/train_sit.py \
-#         --exp latent_imagenet_256 \
-#         --model DiM-L/2 \
-#         --datadir ../data/features/ \
-#         --dataset latent_imagenet256 \
-#         --num-classes 1000 \
-#         --global-batch-size 320 \
-#         --image-size 256 \
-#         --epochs 800 \
-#         --path-type GVP \
-#         --diffusion-form none \
-#         --lr 1e-4 \
-#         --block-type combined \
-#         --bimamba-type none \
-#         --cond-mamba \
-#         --eval-every 50 \
-#         --eval-nsamples 2_000 \
-#         --eval-bs 4 \
-#         --eval-refdir real_samples/imagenet_256/ \
-#         --rms-norm \
-#         --fused-add-norm \
-#         --drop-path 0.1 \
-#         --learnable-pe \
-#         --use-attn-every-k-layers 4 \
-
+        --max-grad-norm 1 \
+        --model-ckpt results/imnet/0000173.pt \
+        --ckpt-every 5 \
+        --save-content-every 5 \
 
 # torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=$NUM_GPUs vim/train_sit.py \
 #         --exp idiml2_gatedmlp_alterorders_imnet256_10percent_GVP_condmamba \

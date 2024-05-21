@@ -28,6 +28,7 @@ class CrossAttentionFusion(nn.Module):
             attn_drop: float = 0.,
             proj_drop: float = 0.,
             norm_layer: nn.Module = nn.LayerNorm,
+            swap_k=False,
     ) -> None:
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
@@ -35,6 +36,7 @@ class CrossAttentionFusion(nn.Module):
         self.head_dim = dim // 2 // num_heads
         self.scale = self.head_dim ** -0.5
         self.fused_attn = use_fused_attn()
+        self.swap_k = swap_k
 
         self.qkv1 = nn.Linear(dim // 2, dim // 2 * 3, bias=qkv_bias)
         self.q_norm1 = norm_layer(self.head_dim) if qk_norm else nn.Identity()
@@ -75,8 +77,12 @@ class CrossAttentionFusion(nn.Module):
         q2, k2, v2 = qkv2.unbind(0)
         q2, k2 = self.q_norm2(q2), self.k_norm2(k2)
 
-        x12 = self._compute_attention(q1, k2, v2)
-        x21 = self._compute_attention(q2, k1, v1)
+        if not self.swap_k:
+            x12 = self._compute_attention(q1, k2, v2)
+            x21 = self._compute_attention(q2, k1, v1)
+        else:
+            x12 = self._compute_attention(q2, k1, v2)
+            x21 = self._compute_attention(q1, k2, v1)
 
         x12 = x12.transpose(1, 2).reshape(B, N, C)
         x21 = x21.transpose(1, 2).reshape(B, N, C)

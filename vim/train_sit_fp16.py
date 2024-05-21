@@ -35,6 +35,7 @@ from time import time
 import argparse
 import logging
 import os
+from accelerate import Accelerator
 from datasets_prep import get_dataset
 
 from diffusion import create_diffusion
@@ -148,21 +149,13 @@ def main(args):
     """
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
-    # Setup DDP:
-    dist.init_process_group("nccl")
-    # if "SLURM_PROCID" in os.environ:
-    #     rank = int(os.environ["SLURM_PROCID"])
-    #     gpu = rank % torch.cuda.device_count()
-    #     world_size = int(os.environ["WORLD_SIZE"], 1)
-    # else:
-    rank = dist.get_rank()
-    device = rank % torch.cuda.device_count()
-    world_size = dist.get_world_size()
-    assert args.global_batch_size % world_size == 0, f"Batch size must be divisible by world size."
+    accelerator = Accelerator()
+    rank = 0 if accelerator.is_main_process else 1
+    device = accelerator.device
+    world_size = accelerator.num_processes
     seed = args.global_seed * world_size + rank
     torch.manual_seed(seed)
-    torch.cuda.set_device(device)
-    print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
+
 
     # Setup an experiment folder:
     experiment_index = args.exp
@@ -185,7 +178,8 @@ def main(args):
     model = create_model(args) # mamba_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
+    # model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
+    model = model.to(device)
     transport = create_transport(
         args.path_type,
         args.prediction,
@@ -207,14 +201,17 @@ def main(args):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-6, verbose=True)
 
-    update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
+    update_ema(ema, model, decay=0)  # Ensure EMA is initialized with synced weights
+
+    # # cast model to fp16
+    model.to(dtype=torch.bfloat16)
 
     if args.model_ckpt and os.path.exists(args.model_ckpt):
-        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
+        checkpoint = torch.load(args.model_ckpt, map_location=device)
         epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
         init_epoch = 0
 
-        state_dict = model.module.state_dict()
+        state_dict = model.state_dict()
         for i, k in enumerate(['x_embedder.proj.weight', 'final_layer.linear.weight', 'final_layer.linear.bias']):
             #NOTE: fixed for DiM-L/4 to DiM-L/2
             if k in checkpoint["model"] and checkpoint["model"][k].shape != state_dict[k].shape:
@@ -228,10 +225,10 @@ def main(args):
                     checkpoint["ema"][k] = checkpoint["ema"][k][:Cin]
 
         # interpolate position embedding
-        interpolate_pos_embed(model.module, checkpoint["model"])
+        interpolate_pos_embed(model, checkpoint["model"])
         interpolate_pos_embed(ema, checkpoint["ema"])
 
-        msg = model.module.load_state_dict(checkpoint["model"], strict=True)
+        msg = model.load_state_dict(checkpoint["model"], strict=True)
         print(msg)
 
         ema.load_state_dict(checkpoint["ema"])
@@ -242,13 +239,16 @@ def main(args):
         del checkpoint
     elif args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
-        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f'cuda:{device}'))
+        checkpoint = torch.load(checkpoint_file, map_location=device)
         init_epoch = checkpoint["epoch"]
         epoch = init_epoch
-        model.module.load_state_dict(checkpoint["model"])
+        model.load_state_dict(checkpoint["model"])
         opt.load_state_dict(checkpoint["opt"])
         ema.load_state_dict(checkpoint["ema"])
         train_steps = checkpoint["train_steps"]
+
+        for g in opt.param_groups:
+            g['lr'] = args.lr
 
         logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
         del checkpoint
@@ -258,18 +258,17 @@ def main(args):
     requires_grad(ema, False)
 
     dataset = get_dataset(args)
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True,
-        seed=args.global_seed
-    )
+    # sampler = DistributedSampler(
+    #     dataset,
+    #     num_replicas=world_size,
+    #     rank=rank,
+    #     shuffle=True,
+    #     seed=args.global_seed
+    # )
     loader = DataLoader(
         dataset,
         batch_size=int(args.global_batch_size // world_size),
-        shuffle=False,
-        sampler=sampler,
+        shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True
@@ -279,6 +278,9 @@ def main(args):
     # Prepare models for training:
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
+
+    # accelerator prepare
+    model, opt, loader = accelerator.prepare(model, opt, loader)
 
     # Variables for monitoring/logging purposes:
     log_steps = 0
@@ -301,16 +303,17 @@ def main(args):
     else:
         sample_model_kwargs = dict(y=ys)
         model_fn = ema.forward
+    
 
     use_latent = True if "latent" in args.dataset else False
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(init_epoch, args.epochs+1):
-        sampler.set_epoch(epoch)
+        # sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
         for i, (x, y) in tqdm(enumerate(loader)):
             # adjust_learning_rate(opt, i / len(loader) + epoch, args)
-            x = x.to(device)
-            y = None if not use_label else y.to(device)
+            x = x.to(device, dtype=torch.bfloat16)
+            y = None if not use_label else y.to(device, dtype=torch.bfloat16)
             if not use_latent:
                 with torch.no_grad():
                     # Map input images to latent space + normalize latents:
@@ -320,10 +323,12 @@ def main(args):
             loss_dict = transport.training_losses(model, x, model_kwargs)
             loss = loss_dict["loss"].mean()
             after_forward = torch.cuda.memory_allocated(device)
-            opt.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
+            opt.zero_grad()
+            accelerator.backward(loss) # loss.backward()
+            if accelerator.sync_gradients:
+                accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             opt.step()
             after_backward = torch.cuda.memory_allocated(device)
             update_ema(ema, model.module)
@@ -339,8 +344,8 @@ def main(args):
                 steps_per_sec = log_steps / (end_time - start_time)
                 # Reduce loss history over all processes:
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
-                dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
-                avg_loss = avg_loss.item() / world_size
+                # dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
+                avg_loss = accelerator.gather(avg_loss.repeat(x.size(0))).mean().item()
                 logger.info(
                     f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, "
                     f"Train Steps/Sec: {steps_per_sec:.2f}, "
@@ -364,7 +369,7 @@ def main(args):
                     "epoch": epoch + 1,
                     "train_steps": train_steps,
                     "args": args,
-                    "model": model.module.state_dict(),
+                    "model": accelerator.unwrap_model(model).state_dict(), # model.module.state_dict(),
                     "opt": opt.state_dict(),
                     "ema": ema.state_dict(),
                 }
@@ -374,7 +379,7 @@ def main(args):
             if epoch % args.ckpt_every == 0 and epoch > 0:
                 checkpoint = {
                     "epoch": epoch + 1,
-                    "model": model.module.state_dict(),
+                    "model": accelerator.unwrap_model(model).state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
                     "args": args
@@ -492,13 +497,15 @@ def main(args):
                 torch.cuda.empty_cache()
             else:
                 print(f"Reference directory {ref_dir} does not exist, skip eval")
-            dist.barrier()
+            # dist.barrier()
         
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
     logger.info("Done!")
-    cleanup()
+    # cleanup()
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
 
 
 def none_or_str(value):
