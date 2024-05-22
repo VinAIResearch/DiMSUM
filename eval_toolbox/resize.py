@@ -8,6 +8,7 @@ import typer
 from natsort import natsorted
 from PIL import Image, ImageFile
 
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from tqdm import tqdm
@@ -83,6 +84,7 @@ def main(
         files = natsorted(list(input_dir.rglob("*.JPEG")))
     else:
         files = natsorted(list(input_dir.rglob("*.JPEG")))[:nsamples]
+
     process_partial = partial(
         process_image,
         input_dir=input_dir,

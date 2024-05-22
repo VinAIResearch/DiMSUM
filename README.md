@@ -29,7 +29,14 @@ Spatial-Frequency Method for Image Generation</h3>
 ## Data
 For CelebA HQ (256) and LSUN, please follow [this repo](https://github.com/NVlabs/NVAE.git) for dataset preparation.
 
-For evaluation, please extract "jpeg" images from data first by using this command:
+For evaluation, please resize and extract "jpeg" images from dataset first.
+
+For LMDB data (like `celeba_256` and `lsun_church`), run this command:
+```bash
+python eval_toolbox/resize_lmdb.py --dataset celeba_256 --datadir ./data/celeba_256/celeba-lmdb/ --image_size 256 --save_dir real_samples/
+```
+
+For image folder of jpeg/png images, run this command instead: 
 ```bash
 python eval_toolbox/resize.py main input_data_dir real_samples/dataname
 ```
