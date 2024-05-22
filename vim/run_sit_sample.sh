@@ -2,9 +2,9 @@ export MASTER_PORT=11121
 
 python vim/sample_sit.py ODE \
     --model DiM-L/2 \
-    --image-size 256 \
-    --ckpt results/idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscanlrandtb_attnevery4/checkpoints/0000250.pt \
-    --global-batch-size 100 \
+    --image-size 512 \
+    --ckpt results/celeb512/0000175.pt \
+    --global-batch-size 1 \
     --path-type GVP \
     --num-classes 1 \
     --sampling-method dopri5 \
@@ -17,6 +17,7 @@ python vim/sample_sit.py ODE \
     --learnable-pe \
     --cond-mamba \
     --use-attn-every-k-layers 4 \
+    --compute-nfe \
     # --measure-time \
 
 # torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/sample_sit_ddp.py SDE \

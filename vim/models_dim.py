@@ -1598,6 +1598,7 @@ class DiMBlockCombined(nn.Module):
         #     window_scan=False,
         # )
 
+        # self.proj = nn.Identity()
         # self.proj = nn.Linear(dim, dim)
         # self.proj = Attention(dim, num_heads=8, qkv_bias=True)
         # self.proj = nn.Sequential(

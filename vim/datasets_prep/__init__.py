@@ -4,7 +4,7 @@ from torchvision.datasets import CIFAR10, ImageNet
 from datasets_prep.lsun import LSUN
 from datasets_prep.stackmnist_data import StackedMNIST, _data_transforms_stacked_mnist
 from datasets_prep.lmdb_datasets import LMDBDataset
-from datasets_prep.latent_datasets import LatentDataset
+from datasets_prep.latent_datasets import LatentDataset, LatentMemmapDataset
 from datasets_prep.data_transforms import center_crop_arr
 
 
@@ -26,6 +26,10 @@ def get_dataset(args):
     elif args.dataset.startswith('latent_imagenet'):
         dataname = ['imagenet256', 'imagenet512']['512' in args.dataset]
         dataset = LatentDataset('imagenet', features_dir=f"{args.datadir}/{dataname}_features", labels_dir=f"{args.datadir}/{dataname}_labels")
+
+    elif args.dataset.startswith('latent_memmap_imagenet'):
+        dataname = ['imagenet256', 'imagenet512']['512' in args.dataset]
+        dataset = LatentMemmapDataset('imagenet', features_dir=f"{args.datadir}/{dataname}_feature_flip.dat", labels_dir=f"{args.datadir}/{dataname}_label_flip.dat")
     
     elif args.dataset.startswith('latent_celeba'):
         dataname = ['celebahq512', 'celebahq1024']['1024' in args.dataset]

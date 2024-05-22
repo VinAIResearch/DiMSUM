@@ -5,6 +5,7 @@
 Sample new images from a pre-trained SiT.
 """
 import torch
+from torch import nn
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 from torchvision.utils import save_image
@@ -34,7 +35,7 @@ class NFECount(nn.Module):
         return self.model.forward_with_cfg(x, t, *args, **kwargs)
     
     def reset_nfe(self):
-        self.nfe = 0
+        self.nfe = torch.tensor(0.0)
 
 
 def main(mode, args):
@@ -122,6 +123,17 @@ def main(mode, args):
         average_nfe = 0.0
         num_trials = 30
         for i in tqdm(range(num_trials)):
+            z = torch.randn(n, 4, latent_size, latent_size, device=device)
+            y = None if not use_label else torch.tensor(class_labels, device=device)
+            if use_cfg:
+                z = torch.cat([z, z], 0)
+                y_null = torch.tensor([args.num_classes] * n, device=device)
+                y = torch.cat([y, y_null], 0)
+                model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+                model_fn = model.forward_with_cfg 
+            else:
+                model_kwargs = dict(y=y)
+                model_fn = model.forward 
             _ = sample_fn(z, model_fn, **model_kwargs)[-1]
             average_nfe += model.nfe / num_trials
             model.reset_nfe()
@@ -161,7 +173,7 @@ def main(mode, args):
     print(f"Sampling took {time() - start_time:.2f} seconds.")
 
     # Save and display images:
-    save_image(samples, "sit_sample.png", nrow=4, normalize=True, value_range=(-1, 1))
+    save_image(samples, "sit_sample.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
 
 
 def none_or_str(value):

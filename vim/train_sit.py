@@ -235,7 +235,9 @@ def main(args):
         print(msg)
 
         ema.load_state_dict(checkpoint["ema"])
-        # opt.load_state_dict(checkpoint["opt"])
+        opt.load_state_dict(checkpoint["opt"])
+        for g in opt.param_groups:
+            g['lr'] = args.lr
         train_steps = 0
 
         logger.info("=> loaded checkpoint (epoch {})".format(epoch))
@@ -249,6 +251,9 @@ def main(args):
         opt.load_state_dict(checkpoint["opt"])
         ema.load_state_dict(checkpoint["ema"])
         train_steps = checkpoint["train_steps"]
+
+        for g in opt.param_groups:
+            g['lr'] = args.lr
 
         logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
         del checkpoint

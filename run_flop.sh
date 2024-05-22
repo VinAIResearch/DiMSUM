@@ -13,7 +13,7 @@ CUDA_VISIBLE_DEVICES=0 python eval_toolbox/compute_flops.py \
     --drop-path 0.1 \
     --learnable-pe \
     --cond-mamba \
-    --use-attn-every-k-layers 4 \
+    # --use-attn-every-k-layers 4 \
     # --not-use-gated-mlp \
 
 

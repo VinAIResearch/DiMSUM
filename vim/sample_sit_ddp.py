@@ -125,6 +125,8 @@ def main(mode, args):
                     f"cfg-{args.cfg_scale}-{args.per_proc_batch_size}-"\
                     f"{mode}-{args.num_sampling_steps}-{args.sampling_method}-"\
                     f"{args.diffusion_form}-{args.last_step}-{args.last_step_size}"
+    if args.use_even_classes:
+        folder_name = folder_name + "-even-classes"
     sample_folder_dir = f"{args.sample_dir}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
@@ -149,10 +151,16 @@ def main(mode, args):
     total = 0
     
     use_label = True if args.num_classes > 1 else False
+    if args.use_even_classes:
+        CLASSES_LIST = list(range(args.num_classes)) * math.ceil(samples_needed_this_gpu/args.num_classes)
+
     for i in pbar:
         # Sample inputs:
         z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
-        y = None if not use_label else torch.randint(0, args.num_classes, (n,), device=device)
+        if args.use_even_classes:
+            y = torch.tensor(CLASSES_LIST[i*n:i*n+n], device=device)
+        else:
+            y = None if not use_label else torch.randint(0, args.num_classes, (n,), device=device)
         
         # Setup classifier-free guidance:
         if using_cfg:
@@ -262,6 +270,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-final-norm", action="store_true")
     parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
     parser.add_argument("--not-use-gated-mlp", action="store_true")
+    parser.add_argument("--use-even-classes", action="store_true")
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
