@@ -5,7 +5,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT 
     --model DiM-L/2 \
     --per-proc-batch-size 128 \
     --image-size 256 \
-    --ckpt /lustre/scratch/client/scratch/research/group/anhgroup/haopt12/dimsum_public_models/celeb256_225ep.pt \
+    --ckpt celeb256_225ep.pt \
     --num-fid-samples 50_000 \
     --path-type GVP \
     --num-classes 1 \
