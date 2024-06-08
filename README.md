@@ -10,6 +10,7 @@ If you find LFM useful for your work, please cite:
     title   = {DiMSUM: Diffusion Mamba - A Scalable and Unified Spatial-Frequency Method for Image Generation},
     journal = {arXiv preprint arXiv:id},
     year    = {2024},
+}
 ```
 
 > Our code will be available soon, stay tuned!
