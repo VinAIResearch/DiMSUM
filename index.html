@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="Diffusion Mamba">
+  <meta name="keywords" content="DiMSUM">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DiMSUM: Diffusion Mamba - A Scalable and Unified Spatial-Frequency Method for Image Generation</title>
+
+  <!-- Global site tag (gtag.js) - Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-PYVRSFMDRL"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+
+    function gtag() {
+      dataLayer.push(arguments);
+    }
+
+    gtag('js', new Date());
+
+    gtag('config', 'G-PYVRSFMDRL');
+  </script>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="icon" href="./static/images/dimsum_icon.png">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/index.js"></script>
+  <script type="text/x-mathjax-config">
+    MathJax.Hub.Register.StartupHook('TeX Jax Ready', function () {
+          MathJax.InputJax.TeX.prefilterHooks.Add(function (data) {
+            data.math = data.math.replace('<br/>', '\\');
+          });
+        });
+  </script>
+  </script>
+  <script type="text/javascript" async
+    src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-MML-AM_CHTML">
+    </script>
+
+</head>
+
+<body>
+
+  <nav class="navbar" role="navigation" aria-label="main navigation">
+  <div class="navbar-brand">
+    <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </a>
+  </div>
+  <div class="navbar-menu">
+    <div class="navbar-start" style="flex-grow: 1; justify-content: center;">
+      <!-- <a class="navbar-item" href="">
+      <span class="icon">
+          <i class="fas fa-home"></i>
+      </span>
+      </a> -->
+
+      <div class="navbar-item has-dropdown is-hoverable">
+        <a class="navbar-link">
+            <span class="icon">
+                <i class="fas fa-home"></i>
+            </span>
+          &nbsp;
+          More Research
+        </a>
+        <div class="navbar-dropdown">
+          <a class="navbar-item" href="https://vinairesearch.github.io/LFM/">
+            Flow Matching in Latent Space
+          </a>
+          <a class="navbar-item" href="https://anti-dreambooth.github.io/">
+            Anti-DreamBooth
+          </a>
+          <a class="navbar-item" href="https://github.com/VinAIResearch/WaveDiff">
+            WaveDiff
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</nav>
+
+
+  <section class="hero">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column has-text-centered">
+            <h1 class="title is-1 publication-title">DiMSUM <img src="./static/images/dimsum_icon.png" class="logo" width=5.5% />: <span style="color:red;">Di</span>ffusion <span style="color:red;">M</span>amba - A <span style="color:red;">S</span>calable and <span style="color:red;">U</span>nified
+                Spatial-Frequency <span style="color:red;">M</span>ethod for Image Generation</h1>
+            <div class="is-size-5 publication-authors">
+              <span class="author-block">
+                <a href="https://hao-pt.github.io/">Hao Phung</a><sup>*1</sup>&emsp;
+              </span>
+              <span class="author-block">
+                <a href="https://quandao10.github.io/">Quan Dao</a><sup>*12&dagger;</sup>&emsp;
+              </span>
+              <span class="author-block">
+                <a href="https://termanteus.com/">Trung Dao</a><sup>1</sup>&emsp;
+              </span>
+              <span class="author-block">
+                <a href="https://viethoang1512.github.io/">Hoang Phan</a><sup>3</sup>&emsp;
+              </span>
+              <span class="author-block">
+                <a href="https://people.cs.rutgers.edu/~dnm/">Dimitris N. Metaxas</a><sup>3</sup>&emsp;
+              </span>
+              <span class="author-block">
+                <a href="https://sites.google.com/site/anhttranusc/">Anh Tran</a><sup>1</sup>
+              </span>
+            </div>
+
+            <div class="is-size-5 publication-authors">
+              <span class="author-block"><sup>1</sup>VinAI Research</span> &emsp;
+              <span class="author-block"><sup>2</sup>Rutgers University</span> &emsp;
+              <span class="author-block"><sup>3</sup>New York University</span> &emsp;
+            </div>
+
+            <div class="is-size-5 publication-authors">
+              <span class="author-block">
+                <emp><sup>*</sup>Equal contribution</emp>
+              </span>
+
+              <span class="author-block">
+                <emp><sup>&dagger;</sup>Work done at VinAI Research</emp>
+              </span>
+            </div>
+
+            <div class="column has-text-centered">
+              <div class="publication-links">
+                <!-- PDF Link. -->
+                <!-- <span class="link-block">
+                <a href="https://arxiv.org/pdf/2011.12948"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fas fa-file-pdf"></i>
+                  </span>
+                  <span>Paper</span>
+                </a>
+              </span> -->
+                <span class="link-block">
+                  <a href="https://arxiv.org/abs/2011.12948" class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                    </span>
+                    <span>arXiv</span>
+                  </a>
+                </span>
+                <!-- Video Link. -->
+                <!-- <span class="link-block">
+                <a href="https://www.youtube.com/watch?v=MrKrnHhk8IA"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fab fa-youtube"></i>
+                  </span>
+                  <span>Video</span>
+                </a>
+              </span> -->
+                <!-- Code Link. -->
+                <span class="link-block">
+                  <a href="https://github.com/VinAIResearch/LFM"
+                    class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="fab fa-github"></i>
+                    </span>
+                    <span>Code</span>
+                  </a>
+                </span>
+                <!-- Dataset Link. -->
+                <!-- <span class="link-block">
+                <a href="https://github.com/google/nerfies/releases/tag/0.1"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="far fa-images"></i>
+                  </span>
+                  <span>Data</span>
+                  </a>
+            </div> -->
+
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+  </section>
+
+  <!-- <section class="hero teaser">
+    <div class="container is-max-desktop">
+      <div class="hero-body">
+        <img src="./static/images/archi.svg" class="framework" />
+        <h3 class="subtitle has-text-centered">
+          <div class="content has-text-justified">
+            <p>
+              Similar to DiT, our method first receives an input image and encodes it to a latent map of size \( 4\times H \times W \). 
+              It then processes the latent map using our proposed Diffusion Mamba network, whose core is a sequence of DiMSUM blocks, each consisting of DiM blocks that employ a novel Mamba structure with spatial and frequency scanning fusion and a globally weight-shared transformer block. 
+            </p>
+            <p>
+              In inference, after multiple denoising steps through a ODE solver, the processed latent is then decoded to produce the output image.
+            </p>
+
+          </div>
+        </h3>
+      </div>
+    </div>
+  </section> -->
+
+  <section class="section">
+    <div class="container is-max-desktop">
+      <!-- Abstract. -->
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-3">Highlight</h2>
+          <div class="content has-text-justified">
+            <!-- We introduce a novel state-space architecture for diffusion models, effectively harnessing spatial and frequency information to enhance the inductive bias towards local features in input images for image generation tasks. While state-space networks, including Mamba, a revolutionary advancement in recurrent neural networks, typically scan input sequences from left to right, they face difficulties with manually-defined scanning orders, especially in the processing of visual data. Our method demonstrates that integrating wavelet transformation into Mamba enhances the local structure awareness of visual inputs by disentangling them into wavelet subbands, representing both low- and high-frequency components. These wavelet-based outputs are then processed and seamlessly fused with the original Mamba outputs through a cross-attention fusion layer, combining both spatial and frequency information to optimize the order awareness of state-space models which is essential for the details and overall quality of image generation. Besides, we introduce a globally-shared transformer to supercharge the performance of Mamba, harnessing its exceptional power to capture global relationships. Through extensive experiments on standard benchmarks, our method demonstrates state-of-the-art results, achieving faster training convergence, and delivering high-quality outputs. -->
+            <p>
+              We introduce DiMSUM, a novel Mamba architecture, synergistically combining spatial and wavelet information to achieve effective and high-quality image synthesis.
+              Our method further leverages a hybrid mamba-attention design by integrating a globally-shared transformer block. This enriches global-context capture, addressing the bottlenecks of traditional Mamba.
+            </p>
+            <p>
+                Through extensive experiments on standard benchmarks, our method achieves state-of-the-art results, with a FID of 4.62 on CelebHQ 256, 3.76 on LSUN Church, and x.x on ImageNet1k 256. 
+                Additionally, our approach attains faster training convergence compared to Zigma and other diffusion methods.
+            </p>
+
+          </div>
+        </div>
+      </div>
+      <!--/ Abstract. -->
+
+      <!-- Paper video. -->
+      <!-- <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-3">Unconditional Generation</h2>
+          <div class="publication-video">
+            <iframe src="https://www.youtube.com/embed/MrKrnHhk8IA?rel=0&amp;showinfo=0" frameborder="0"
+              allow="autoplay; encrypted-media" allowfullscreen></iframe>
+          </div>
+        </div>
+      </div> -->
+      <!--/ Paper video. -->
+    </div>
+  </section>
+
+
+
+
+  <section class="hero is-light is-small">
+    <div class="hero-body">
+      <div class="container">
+        <div id="results-carousel" class="carousel results-carousel">
+          <div class="item item-starfish">
+            <img src="static/images/samples_imagenet_256_dopri5_1e-05_1e-05_cls327_cfg4.0.jpeg"
+              class="interpolation-image" />
+            <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
+              <div class="is-size-5 has-text-centered">
+                Class: 'Starfish' (327)
+              </div>
+            </div>
+          </div>
+          <div class="item item-macaw">
+            <img src="static/images/samples_imagenet_256_dopri5_1e-05_1e-05_cls88_cfg4.0.jpg"
+              class="interpolation-image" />
+            <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
+              <div class="is-size-5 has-text-centered">
+                Class: 'Macaw' (88)
+              </div>
+            </div>
+          </div>
+          <div class="item item-golden-retriever">
+            <img src="static/images/samples_imagenet_256_dopri5_1e-05_1e-05_cls207_cfg4.0.jpg"
+              class="interpolation-image" />
+            <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
+              <div class="is-size-5 has-text-centered">
+                Class: 'Golden retriever' (207)
+              </div>
+            </div>
+          </div>
+          <div class="item item-boathouse">
+            <img src="static/images/samples_imagenet_256_dopri5_1e-05_1e-05_cls449_cfg4.0.jpg"
+              class="interpolation-image" />
+            <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
+              <div class="is-size-5 has-text-centered">
+                Class: 'Boathouse' (449)
+              </div>
+            </div>
+          </div>
+          <div class="item item-mushroom">
+            <img src="static/images/samples_imagenet_256_dopri5_1e-05_1e-05_cls947_cfg4.0.jpg"
+              class="interpolation-image" />
+            <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
+              <div class="is-size-5 has-text-centered">
+                Class: 'Mushroom' (947)
+              </div>
+            </div>
+          </div>
+          <div class="item item-cliff">
+            <img src="static/images/samples_imagenet_256_dopri5_1e-05_1e-05_cls972_cfg4.0.jpg"
+              class="interpolation-image" />
+            <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
+              <div class="is-size-5 has-text-centered">
+                Class: 'Cliff' (972)
+              </div>
+            </div>
+          </div>
+          <div class="item item-coral-reef">
+            <img src="static/images/samples_imagenet_256_dopri5_1e-05_1e-05_cls973_cfg4.0.jpg"
+              class="interpolation-image" />
+            <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
+              <div class="is-size-5 has-text-centered">
+                Class: 'Coral reef' (973)
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><br>
+      <div class="content has-text-centered">
+        Class-conditional image generation on ImageNet
+      </div>
+    </div>
+  </section>
+
+
+
+
+  <section class="section" id="motivation">
+    <div class="container is-max-desktop content">
+
+      <div class="columns is-centered">
+        <div class="column is-full-width">
+
+          <!-- Motivation -->
+          <h2 class="title is-3">Motivation</h2>
+          <div class="content has-text-justified">
+            <p>
+                Previous state-space models, particularly in processing visual data, failed to effectively address the design choice of scanning order due to their exclusive reliance on spatial processing, neglecting crucial long-range relations in the frequency spectrum. 
+                We propose a novel approach that integrates frequency scanning with the conventional spatial scanning mechanism.
+            </p>
+            <p>
+                Motivated by the above observation, this paper introduces DiMSUM, a novel architecture leveraging Mamba's power to enhance diffusion models' generation capabilities. 
+                By integrating wavelet transforms and spatial information, our approach improves sensitivity to local structures and long-range dependencies, accelerating convergence and image synthesis quality. 
+                Additionally, globally shared transformer blocks address global context integration, overcoming limitations of traditional Mamba models. 
+                Extensive experiments show that DiMSUM achieves state-of-the-art FID scores and recall, setting a new benchmark in generative image modeling.
+            </p>
+
+          </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- <section class="section">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column is-full-width">
+          <h2 class="title is-3">Method</h2>
+          <div class="content has-text-justified">
+          <p>
+            Similar to DiT, our method first receives an input image and encodes it to a latent map of size \( 4\times H \times W \). 
+            It then processes the latent map using our proposed Diffusion Mamba network, whose core is a sequence of DiMSUM blocks, each consisting of DiM blocks that employ a novel Mamba structure with spatial and frequency scanning fusion and a globally weight-shared transformer block. 
+          </p>
+          <p>
+            In inference, after multiple denoising steps through a ODE solver, the processed latent is then decoded to produce the output image.
+          </p>
+          </div>
+          <figure>
+            <img src="./static/images/wavelet_mamba.svg" class="interpolation-image" />
+          </figure>
+
+          <h3 class="title is-4">Wavelet-Mamba</h3>
+          <div class="content has-text-justified">
+            <p>
+                Wavelet-Mamba
+            </p>
+          </div>
+
+          <h3 class="title is-4">Globally-shared Transformer Block</h3>
+          <div class="content has-text-justified">
+            <p>
+                Wavelet-Mamba
+            </p>
+          </div>
+
+
+        </div>
+
+      </div>
+  </section> -->
+
+  <section class="section">
+    <div class="container is-max-desktop">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Results</h2>
+      </div>
+      <div class="columns is-centered">
+        <div class="column">
+          <div class="content">
+            <figure>
+              <img src="./static/images/celeb256.jpg" class="interpolation-image" width=45% style="margin-right: 60px;" />
+              <img src="./static/images/celeb512.jpg" class="interpolation-image" width=45% />
+              <figcaption>Figure 1. Unconditional generation on CelebA HQ</figcaption>
+            </figure>
+
+          </div>
+        </div>
+      </div>
+      <br> 
+      </div>
+      <div class="columns is-centered">
+        <div class="column" style="margin-left: 13%;">
+          <div class="content">
+            <figure>
+              <img src="./static/images/church256.jpg" class="interpolation-image" width=70% />
+              <figcaption>Figure 2. Unconditional generation on LSUN Church</figcaption>
+            </figure>
+          </div>
+          <!-- <div class="content">
+            <figure>
+              <img src="./static/images/imnet.jpg" class="interpolation-image" width=35% />
+              <figcaption>Figure 3. Class-conditional generation on ImageNet1k 256</figcaption>
+            </figure>
+          </div> -->
+        </div>
+        <div class="column">
+          <div class="content" style="margin-left: -42%;">
+            <figure>
+              <img src="./static/images/imnet.jpg" class="interpolation-image" width=60% />
+              <figcaption>Figure 3. Class-conditional generation on ImageNet1k 256</figcaption>
+            </figure>
+          </div>
+        </div>
+        <!-- <div class="column">
+          <div class="content">
+            <figure>
+              <img src="./static/images/training_convergence.png" class="interpolation-image" width=35% />
+              <figcaption style="margin-left: 400px; margin-right: 400px;">
+                Figure 4. Training convergence on CelebA HQ 256.
+                Our method achieves faster training convergence, requiring fewer than half the training epochs compared to other diffusion models, while delivering a more stable training curve.
+              </figcaption>
+            </figure>
+          </div>
+        </div> -->
+      </div>
+      <div class="columns is-centered">
+        <div class="column">
+          <div class="content">
+            <figure>
+              <img src="./static/images/training_convergence.png" class="interpolation-image" width=35% />
+              <figcaption style="margin-left: 400px; margin-right: 400px;">
+                Figure 4. Training convergence on CelebA HQ 256.
+                Our method achieves faster training convergence, requiring fewer than half the training epochs compared to other diffusion models, while delivering a more stable training curve.
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+  </section>
+
+  <!-- <section class="section" id="bound">
+    <div class="container is-max-desktop content">
+      <h2 class="title">Theoretical analysis: Bounding estimation error</h2>
+      <div class="content has-text-justified">
+        We have shown that minimizing the FM objective on latent space controls the Wasserstein distance between the
+        target density \( p_0 \) and the reconstructed density \( \hat{p}_0 \), which coincides with Fréchet inception
+        distance (FID), a common metric for image generation.
+        This means that our latent flow matching is guaranteed to control this metric, given reasonable estimation of \(
+        \hat{v}(\mathbf{z}_t, t) \). Nonetheless, the analysis also suggests that the quality of latent flow matching
+        depends on the constants that define the expressivity of the decoders and encoders, which has been observed in
+        prior research on generative modeling in latent space.
+
+        <img src="./static/images/bound.jpeg" class="interpolation-image" />
+
+
+      </div>
+    </div>
+  </section> -->
+
+  <!-- <section class="section" id="Related">
+    <div class="container is-max-desktop content">
+      <h2 class="title">Related Works</h2>
+      <div class="content has-text-justified">
+        <ul>
+
+          <li>Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, Matthew Le. <a
+              href="https://arxiv.org/abs/2210.02747"> Flow Matching for Generative Modeling</a>, ICLR 2023
+            (Notable top 25%).</li><br>
+
+          <li>Xingchao Liu, Chengyue Gong, Qiang Liu. <a href="https://arxiv.org/abs/2209.03003"> Flow Straight
+              and
+              Fast: Learning to Generate and Transfer Data with Rectified Flow</a>, ICLR 2023
+            (Notable top 25%).</li><br>
+
+          <li>Arash Vahdat, Karsten Kreis, Jan Kautz. <a href="https://arxiv.org/abs/2106.05931"> Score-based Generative
+              Modeling in Latent Space</a>, NeurIPS 2021.</li><br>
+
+          <li>Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, Björn Ommer. <a
+              href="https://arxiv.org/abs/2106.05931"> High-Resolution Image
+              Synthesis with Latent Diffusion Models</a>, CVPR 2022.</li><br>
+
+
+          <li>Jonathan Ho, Tim Salimans. <a href="https://arxiv.org/abs/2207.12598"> Classifier-Free Diffusion
+              Guidance</a>, NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications.</li><br>
+
+          <li>Prafulla Dhariwal, Prafulla_Dhariwal1, Alexander Quinn Nichol. <a href="https://arxiv.org/abs/2105.05233">
+              Diffusion Models Beat GANs on Image Synthesis</a>, NeurIPS
+            2021 (Spotlight).</li><br>
+
+          <li>William Peebles, Saining Xie. <a href="https://arxiv.org/abs/2212.09748"> Scalable Diffusion Models
+              with Transformers</a>, arXiv preprint arXiv:2212.09748.</li><br>
+
+        </ul>
+      </div>
+
+    </div>
+  </section> -->
+
+
+  <section class="section" id="BibTeX">
+    <div class="container is-max-desktop content">
+      <h2 class="title">BibTeX</h2>
+      <code style="background-color:transparent;color:#808080;">
+        <!-- #EA48CA -->
+        @article{phung2024dimsum,<br>
+        &emsp;&emsp; author  = {Phung, Hao and Dao, Quan and Dao, Trung and Phan, Hoang and Metaxas, Dimitris and Tran, Anh},<br>
+        &emsp;&emsp; title   = {DiMSUM: Diffusion Mamba - A Scalable and Unified
+            Spatial-Frequency Method for Image Generation},<br>
+        &emsp;&emsp; journal = {arXiv preprint arXiv:id},<br>
+        &emsp;&emsp; year    = {2024},<br>
+      }</code>
+    </div>
+  </section>
+
+
+  <footer class="footer">
+    <div class="container">
+      <!-- <div class="content has-text-centered">
+        <a class="icon-link" href="./static/videos/nerfies_paper.pdf">
+          <i class="fas fa-file-pdf"></i>
+        </a>
+        <a class="icon-link" href="https://github.com/keunhong" class="external-link" disabled>
+          <i class="fab fa-github"></i>
+        </a>
+      </div> -->
+      <div class="columns is-centered">
+        <div class="column is-8">
+          <div class="content">
+            <p>
+              This website is licensed under a <a rel="license"
+                href="http://creativecommons.org/licenses/by-sa/4.0/">Creative
+                Commons Attribution-ShareAlike 4.0 International License</a>.
+            </p>
+            <p>
+              This page is borrowed from <a href="https://github.com/nerfies/nerfies.github.io">Nerfies</a>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+</body>
+
+</html>
