@@ -7,6 +7,7 @@
 """
 A minimal training script for DiT using PyTorch DDP.
 """
+import datetime
 import math
 import sys
 from pathlib import Path
@@ -33,13 +34,13 @@ import argparse
 import logging
 import os
 from datasets_prep import get_dataset
-from models_dim import DiM_models
-from models_dmm import mamba_models
+
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
 from download import find_model
 from tqdm import tqdm
 from ptflops import get_model_complexity_info
+from create_model import create_model
 
 eval_import_path = (Path(__file__).parent.parent / "eval_toolbox").resolve().as_posix()
 sys.path.append(eval_import_path)
@@ -129,7 +130,7 @@ def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
     # Setup DDP:
-    dist.init_process_group("nccl")
+    dist.init_process_group("nccl", timeout=datetime.timedelta(seconds=5400))
     assert args.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
@@ -139,52 +140,65 @@ def main(args):
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
 
     # Setup an experiment folder:
+    experiment_index = args.exp
+    model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
+    experiment_dir = f"{args.results_dir}/{experiment_index}-{model_string_name}"  # Create an experiment folder
+    checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
+    sample_dir = f"{experiment_dir}/samples"
     if rank == 0:
         os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
-        experiment_index = args.exp
-        model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-        experiment_dir = f"{args.results_dir}/{experiment_index}-{model_string_name}"  # Create an experiment folder
-        checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
         os.makedirs(checkpoint_dir, exist_ok=True)
+        os.makedirs(sample_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
     else:
         logger = create_logger(None)
 
+
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type, block_type=args.block_type)
-    
+    model = create_model(args) # mamba_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    requires_grad(ema, False)
     model = DDP(model.to(device), device_ids=[rank])
-    diffusion = create_diffusion(timestep_respacing="", learn_sigma=args.learn_sigma)  # default: 1000 steps, linear noise schedule
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
-    logger.info(f"Mamba Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    diffusion = create_diffusion(timestep_respacing="", learn_sigma=args.learn_sigma, gamma=args.loss_weighting_gamma)  # default: 1000 steps, linear noise schedule
+    vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
+    logger.info(f"DiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-5, verbose=True)
 
-    # Setup resume
-    if args.resume:
-        checkpoint = find_model(args.resume)
-        init_epoch = checkpoint['epoch']
-        model.load_state_dict(checkpoint['model'])
-        opt.load_state_dict(checkpoint['opt'])
-        ema.load_state_dict(checkpoint['ema'])
-        train_steps = checkpoint['train_step']
-        log_steps = train_steps
+    if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
+        checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
+        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f'cuda:{device}'))
+        init_epoch = checkpoint["epoch"]
+        epoch = init_epoch
+        model.module.load_state_dict(checkpoint["model"])
+        opt.load_state_dict(checkpoint["opt"])
+        ema.load_state_dict(checkpoint["ema"])
+        train_steps = checkpoint["train_steps"]
+
+        logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
+        del checkpoint
+
+    elif args.model_ckpt and os.path.exists(args.model_ckpt):
+        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
+        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
+        init_epoch = epoch
+        model.module.load_state_dict(checkpoint["model"])
+        ema.load_state_dict(checkpoint["ema"])
+        opt.load_state_dict(checkpoint["opt"])
+        train_steps = 0
+
+        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
+        del checkpoint
     else:
         init_epoch = 0
-        # Prepare models for training:
-        update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
         train_steps = 0
-        log_steps = 0
-        
-    
+    requires_grad(ema, False)
+
     dataset = get_dataset(args)
     sampler = DistributedSampler(
         dataset,
@@ -207,22 +221,41 @@ def main(args):
     
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
+
     # Variables for monitoring/logging purposes:
+    log_steps = 0
     running_loss = 0
     start_time = time()
+    use_label = True if "imagenet" in args.dataset else False
+
+    # Create sampling noise & label
+    sample_bs = 4
+    zs = torch.randn(sample_bs, 4, latent_size, latent_size, device=device)
+    ys = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
+    use_cfg = args.cfg_scale > 1.0
+    # Setup classifier-free guidance:
+    if use_cfg:
+        zs = torch.cat([zs, zs], 0)
+        y_null = torch.tensor([args.num_classes] * sample_bs, device=device)
+        ys = torch.cat([ys, y_null], 0)
+        sample_model_kwargs = dict(y=ys, cfg_scale=args.cfg_scale)
+        model_fn = ema.forward_with_cfg
+    else:
+        sample_model_kwargs = dict(y=ys)
+        model_fn = ema.forward
 
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(init_epoch, args.epochs+1):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
-        for x, _ in tqdm(loader):
+        for x, y in tqdm(loader):
             x = x.to(device)
-            # y = y.to(device)
+            y = None if not use_label else y.to(device)
             with torch.no_grad():
                 # Map input images to latent space + normalize latents:
                 x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
-            model_kwargs = dict(y=None)
+            model_kwargs = dict(y=y)
             loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
             loss = loss_dict["loss"].mean()
             opt.zero_grad()
@@ -251,10 +284,24 @@ def main(args):
         if not args.no_lr_decay:
             scheduler.step()
 
-        # Save DiT checkpoint:
-        if epoch % args.ckpt_every == 0 and epoch > 0:
-            if rank == 0:
+        if rank == 0:
+            # latest checkpoint
+            if epoch % args.save_content_every == 0:
+                content = {
+                    "epoch": epoch + 1,
+                    "train_steps": train_steps,
+                    "args": args,
+                    "model": model.module.state_dict(),
+                    "opt": opt.state_dict(),
+                    "ema": ema.state_dict(),
+                }
+                torch.save(content, os.path.join(checkpoint_dir, "content.pth"))
+                logger.info("Saved content")
+
+            # Save DiT checkpoint:
+            if epoch % args.ckpt_every == 0 and epoch > 0:
                 checkpoint = {
+                    "epoch": epoch + 1,
                     "model": model.module.state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
@@ -266,16 +313,21 @@ def main(args):
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
             dist.barrier()
-        if rank == 0:
-            z = torch.randn(4, 4, latent_size, latent_size, device=device)
+
+        if rank == 0 and epoch % args.plot_every == 0:
             with torch.no_grad():
                 samples = diffusion.p_sample_loop(
-                    model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
+                    model_fn, zs.shape, zs, clip_denoised=False, model_kwargs=sample_model_kwargs, progress=True, device=device
                 )
+                dist.barrier()
+                if use_cfg: #remove null samples
+                    samples, _ = samples.chunk(2, dim=0)
                 samples = vae.decode(samples / 0.18215).sample
 
             # Save and display images:
-            save_image(samples, f"{checkpoint_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+            save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+            del samples
+
         if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
             ref_dir = Path(args.eval_refdir)
             if ref_dir.exists():
@@ -299,14 +351,22 @@ def main(args):
                     z = torch.randn(
                         n, 4, latent_size, latent_size, device=device
                     )
+                    y = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
                     # Setup classifier-free guidance:
-                    model_kwargs = dict(y=None)
-                    sample_fn = model.forward
+                    if use_cfg:
+                        z = torch.cat([z, z], 0)
+                        y_null = torch.tensor([args.num_classes] * n, device=device)
+                        y = torch.cat([y, y_null], 0)
+                        sample_model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+                        model_eval_fn = model.forward_with_cfg
+                    else:
+                        sample_model_kwargs = dict(y=y)
+                        model_eval_fn = model.forward
 
                     # Sample images:
                     if args.eval_eta is None:
                         samples = diffusion.p_sample_loop(
-                            sample_fn,
+                            model_eval_fn,
                             z.shape,
                             z,
                             clip_denoised=False,
@@ -316,7 +376,7 @@ def main(args):
                         )
                     else:
                         samples = diffusion.ddim_sample_loop(
-                            sample_fn,
+                            model_eval_fn,
                             z.shape,
                             z,
                             clip_denoised=False,
@@ -379,6 +439,7 @@ def main(args):
                 print(f"Reference directory {ref_dir} does not exist, skip eval")
             dist.barrier()
 
+        
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
     logger.info("Done!")
@@ -393,27 +454,45 @@ if __name__ == "__main__":
     parser.add_argument("--resume", type=str, default=None, required=False)
     parser.add_argument("--datadir", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--model", type=str, choices=list(mamba_models.keys())+list(DiM_models.keys()), default="MambaDiffV1_XL_2")
+    parser.add_argument("--model", type=str, default="MambaDiffV1_XL_2")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--num-classes", type=int, default=-1)
+    parser.add_argument("--cfg-scale", type=float, default=1.)
+    parser.add_argument("--label-dropout", type=float, default=-1)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
-    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
+    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="mse")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
+    parser.add_argument("--save-content-every", type=int, default=5)
+    parser.add_argument("--plot-every", type=int, default=5)
+    parser.add_argument("--learn-sigma", action="store_true")
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
+
+    parser.add_argument("--num-moe-experts", type=int, default=8)
+    parser.add_argument("--mamba-moe-layers", type=str, nargs="*", default=None)
+    parser.add_argument("--is-moe", action="store_true")
+    parser.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
+    parser.add_argument("--gated-linear-unit", action="store_true")
+    parser.add_argument("--loss-weighting-gamma", type=float, default=None)
+    parser.add_argument("--model-ckpt", type=str, default='')
+    parser.add_argument("--resume", action="store_true")
+    
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--learn-sigma", action='store_true', default=False)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
-    parser.add_argument("--eval-every", type=int, default=100)
-    parser.add_argument("--eval-refdir", type=str, default=None)
-    parser.add_argument("--eval-nsamples", type=int, default=1000)
-    parser.add_argument("--eval-bs", type=int, default=4)
-    parser.add_argument("--eval-eta", type=float, default=0.6)
-    parser.add_argument("--eval-cfg-scale", type=float, default=1.0)
+
+    group = parser.add_argument_group("Eval")
+    group.add_argument("--eval-every", type=int, default=100)
+    group.add_argument("--eval-refdir", type=str, default=None)
+    group.add_argument("--eval-nsamples", type=int, default=1000)
+    group.add_argument("--eval-bs", type=int, default=4)
+    group.add_argument("--eval-eta", type=float, default=0.6)
+    group.add_argument("--eval-cfg-scale", type=float, default=1.0)
     
     args = parser.parse_args()
     main(args)

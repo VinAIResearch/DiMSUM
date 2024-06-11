@@ -64,7 +64,8 @@ def subprocess_fn(rank, args, temp_dir):
                                               device=device,
                                               progress=progress,
                                               gen_dataset_kwargs=args.gen_dataset_kwargs,
-                                              cache=False)
+                                              cache=True,
+                                            )
         if rank == 0:
             metric_main.report_metric(result_dict, run_dir=args.run_dir, snapshot_pkl=args.network_pkl)
         if rank == 0 and args.verbose:
@@ -97,8 +98,8 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
 @click.option('--img_resolution', help='Image resolution', type=int, default=256, metavar='INT', show_default=True)
 @click.option('--gen_data', help='Generated data (directory or zip) [default: same as training data]', metavar='PATH')
-
-def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose, img_resolution, gen_data):
+@click.option('--run_dir', help='run directory [default: ./]', metavar='PATH', default="./")
+def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose, img_resolution, gen_data, run_dir):
     """Calculate quality metrics for previous training run or pretrained network pickle.
 
     Examples:
@@ -165,8 +166,8 @@ def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose, img_res
         print(json.dumps(args.gen_dataset_kwargs, indent=2))
 
     # Locate run dir.
-    args.run_dir = None
-    args.run_dir = "./"
+    # args.run_dir = None
+    args.run_dir = run_dir
 
     # Launch processes.
     if args.verbose:

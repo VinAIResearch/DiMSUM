@@ -55,6 +55,12 @@ class LossType(enum.Enum):
         return self == LossType.KL or self == LossType.RESCALED_KL
 
 
+class LossWeightingType(enum.Enum):
+    ONE = enum.auto()
+    SNR = enum.auto() # 1 / sigma**2
+    SoftMinSNR = enum.auto() # 1 / (gamma**-1 + sigma**2)
+
+
 def _warmup_beta(beta_start, beta_end, num_diffusion_timesteps, warmup_frac):
     betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float64)
     warmup_time = int(num_diffusion_timesteps * warmup_frac)
@@ -156,12 +162,16 @@ class GaussianDiffusion:
         betas,
         model_mean_type,
         model_var_type,
-        loss_type
+        loss_type,
+        loss_weighting_type,
+        gamma=1.,
     ):
 
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
+        self.loss_weighting_type = loss_weighting_type
+        self.gamma = gamma
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -199,6 +209,12 @@ class GaussianDiffusion:
         self.posterior_mean_coef2 = (
             (1.0 - self.alphas_cumprod_prev) * np.sqrt(alphas) / (1.0 - self.alphas_cumprod)
         )
+    
+    def _weighting_soft_min_snr(self, t):
+        return 1 / (_extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, (t.size(0),))**2 + 1/self.gamma)
+
+    def _weighting_snr(self, t):
+        return 1 / (_extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, (t.size(0),))**2)
 
     def q_mean_variance(self, x_start, t):
         """
@@ -776,7 +792,13 @@ class GaussianDiffusion:
                 ModelMeanType.EPSILON: noise,
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
-            terms["mse"] = mean_flat((target - model_output) ** 2)
+            if self.loss_weighting_type == LossWeightingType.SNR: 
+                weighting = self._weighting_snr(t)
+            elif self.loss_weighting_type == LossWeightingType.SoftMinSNR: 
+                weighting = self._weighting_soft_min_snr(t)
+            else:
+                weighting = th.ones_like(t)
+            terms["mse"] = weighting * mean_flat((target - model_output) ** 2)
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:

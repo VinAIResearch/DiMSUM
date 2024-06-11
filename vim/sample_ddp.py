@@ -13,10 +13,9 @@ For a simple single-GPU/CPU sampling script, see sample.py.
 """
 import torch
 import torch.distributed as dist
-from models_dim import DiM_models
-from models_dmm import mamba_models
 from download import find_model
 from diffusion import create_diffusion
+from create_model import create_model
 from diffusers.models import AutoencoderKL
 from tqdm import tqdm
 import os
@@ -28,7 +27,7 @@ import argparse
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
     """
-    Builds a single .npz file from a folder of .png samples.
+    Builds a single .npz file from a folder of .jpg samples.
     """
     samples = []
     for i in tqdm(range(num), desc="Building .npz file from samples"):
@@ -62,14 +61,15 @@ def main(args):
 
     # Load model:
     latent_size = args.image_size // 8
-    model = DiM_models[args.model](learn_sigma = args.learn_sigma, pe_type=args.pe_type, block_type=args.block_type).to(device)
+    model = create_model(args).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
-    ckpt_path = args.ckpt
+    ckpt_path = args.ckpt # or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
     model.load_state_dict(state_dict, strict=True)
     model.eval()  # important!
+
     diffusion = create_diffusion(str(args.num_sampling_steps), learn_sigma=args.learn_sigma)
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"../stabilityai/sd-vae-ft-{args.vae}").to(device)
     assert args.cfg_scale >= 1.0, "In almost all cases, cfg_scale be >= 1.0"
     using_cfg = args.cfg_scale > 1.0
 
@@ -101,9 +101,13 @@ def main(args):
     pbar = range(iterations)
     pbar = tqdm(pbar) if rank == 0 else pbar
     total = 0
+
+    use_label = True if args.num_classes > 1 else False
     for _ in pbar:
         # Sample inputs:
         z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
+        y = None if not use_label else torch.randint(0, args.num_classes, (n,), device=device)
+
         # Setup classifier-free guidance:
         model_kwargs = dict(y=None)
         sample_fn = model.forward
@@ -123,7 +127,7 @@ def main(args):
         samples = vae.decode(samples / 0.18215).sample
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
-        # Save samples to disk as individual .png files
+        # Save samples to disk as individual .jpg files
         for i, sample in enumerate(samples):
             index = i * dist.get_world_size() + rank + total
             Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.jpg")
@@ -138,23 +142,41 @@ def main(args):
     dist.destroy_process_group()
 
 
+def none_or_str(value):
+    if value == 'None':
+        return None
+    return value
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=list(mamba_models.keys())+list(DiM_models.keys()), default="DiT-XL/2")
-    parser.add_argument("--vae",  type=str, choices=["ema", "mse"], default="ema")
+    parser.add_argument("--model", type=str, default="DiM-XL/2")
+    parser.add_argument("--vae",  type=str, choices=["ema", "mse"], default="mse")
     parser.add_argument("--sample-dir", type=str, default="samples")
     parser.add_argument("--per-proc-batch-size", type=int, default=32)
     parser.add_argument("--num-fid-samples", type=int, default=50_000)
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    parser.add_argument("--num-classes", type=int, default=-1)
-    parser.add_argument("--cfg-scale",  type=float, default=1)
+    parser.add_argument("--num-classes", type=int, default=0)
+    parser.add_argument("--cfg-scale",  type=float, default=1.)
     parser.add_argument("--num-sampling-steps", type=int, default=250)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--tf32", action=argparse.BooleanOptionalAction, default=True,
                         help="By default, use TF32 matmuls. This massively accelerates sampling on Ampere GPUs.")
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
-    parser.add_argument("--learn-sigma", action='store_true', default=False)
+    parser.add_argument("--learn-sigma", action="store_true")
+    parser.add_argument("--num-in-channels", type=int, default=4)
+    parser.add_argument("--label-dropout", type=float, default=-1)
+
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
+
+    group = parser.add_argument_group("MoE arguments")
+    group.add_argument("--num-moe-experts", type=int, default=8)
+    group.add_argument("--mamba-moe-layers", type=none_or_str, nargs="*", default=None)
+    group.add_argument("--is-moe", action="store_true")
+    group.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
+    group.add_argument("--gated-linear-unit", action="store_true")
+
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
     parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
     parser.add_argument("--eta",  type=float, default=None)
