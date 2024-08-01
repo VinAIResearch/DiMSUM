@@ -30,13 +30,13 @@ import dnnlib
 from pytorch_fid import metric_main, metric_utils
 
 
-def create_npz_from_sample_folder(sample_dir, num=50_000):
+def create_npz_from_sample_folder(sample_dir, image_ext, num=50_000):
     """
     Builds a single .npz file from a folder of .jpg samples.
     """
     samples = []
     for i in tqdm(range(num), desc="Building .npz file from samples"):
-        sample_pil = Image.open(f"{sample_dir}/{i:06d}.jpg")
+        sample_pil = Image.open(f"{sample_dir}/{i:06d}.{image_ext}")
         sample_np = np.asarray(sample_pil).astype(np.uint8)
         samples.append(sample_np)
     samples = np.stack(samples)
@@ -130,14 +130,14 @@ def main(mode, args):
     sample_folder_dir = f"{args.sample_dir}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
-        print(f"Saving .jpg samples at {sample_folder_dir}")
+        print(f"Saving .{args.image_ext} samples at {sample_folder_dir}")
     dist.barrier()
 
     # Figure out how many samples we need to generate on each GPU and how many iterations we need to run:
     n = args.per_proc_batch_size
     global_batch_size = n * dist.get_world_size()
     # To make things evenly-divisible, we'll sample a bit more than we need and then discard the extra samples:
-    num_samples = len([name for name in os.listdir(sample_folder_dir) if (os.path.isfile(os.path.join(sample_folder_dir, name)) and ".jpg" in name)])
+    num_samples = len([name for name in os.listdir(sample_folder_dir) if (os.path.isfile(os.path.join(sample_folder_dir, name)) and f".{args.image_ext}" in name)])
     total_samples = int(math.ceil(args.num_fid_samples / global_batch_size) * global_batch_size)
     if rank == 0:
         print(f"Total number of images that will be sampled: {total_samples}")
@@ -149,10 +149,15 @@ def main(mode, args):
     pbar = range(iterations)
     pbar = tqdm(pbar) if rank == 0 else pbar
     total = 0
-    
+
     use_label = True if args.num_classes > 1 else False
+    if use_label:
+        real_num_classes = args.num_classes - 1 # not count uncond cls
+    else:
+        real_num_classes = args.num_classes
+
     if args.use_even_classes:
-        CLASSES_LIST = list(range(args.num_classes)) * math.ceil(samples_needed_this_gpu/args.num_classes)
+        CLASSES_LIST = list(range(real_num_classes)) * math.ceil(samples_needed_this_gpu/real_num_classes)
 
     for i in pbar:
         # Sample inputs:
@@ -160,12 +165,12 @@ def main(mode, args):
         if args.use_even_classes:
             y = torch.tensor(CLASSES_LIST[i*n:i*n+n], device=device)
         else:
-            y = None if not use_label else torch.randint(0, args.num_classes, (n,), device=device)
+            y = None if not use_label else torch.randint(0, real_num_classes, (n,), device=device)
         
         # Setup classifier-free guidance:
         if using_cfg:
             z = torch.cat([z, z], 0)
-            y_null = torch.tensor([1000] * n, device=device)
+            y_null = torch.tensor([real_num_classes] * n, device=device)
             y = torch.cat([y, y_null], 0)
             model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
             model_fn = model.forward_with_cfg
@@ -184,14 +189,14 @@ def main(mode, args):
         # Save samples to disk as individual .jpg files
         for i, sample in enumerate(samples):
             index = i * dist.get_world_size() + rank + total
-            Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.jpg")
+            Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.{args.image_ext}")
         total += global_batch_size
         dist.barrier()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
     dist.barrier()
     if rank == 0:
-        create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
+        create_npz_from_sample_folder(sample_folder_dir, args.image_ext, args.num_fid_samples)
         print("Done.")
     
     # test FID
@@ -271,6 +276,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
     parser.add_argument("--not-use-gated-mlp", action="store_true")
     parser.add_argument("--use-even-classes", action="store_true")
+    parser.add_argument("--image-ext", type=str, default="jpg")
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])

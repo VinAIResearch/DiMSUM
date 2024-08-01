@@ -2,11 +2,11 @@ export MASTER_PORT=11121
 
 python vim/sample_sit.py ODE \
     --model DiM-L/2 \
-    --image-size 512 \
-    --ckpt results/celeb512/0000175.pt \
-    --global-batch-size 1 \
+    --image-size 256 \
+    --ckpt results/imnet256/0000510.pt \
+    --global-batch-size 27 \
     --path-type GVP \
-    --num-classes 1 \
+    --num-classes 1001 \
     --sampling-method dopri5 \
     --diffusion-form none \
     --num-sampling-steps 250 \
@@ -17,7 +17,8 @@ python vim/sample_sit.py ODE \
     --learnable-pe \
     --cond-mamba \
     --use-attn-every-k-layers 4 \
-    --compute-nfe \
+    --cfg-scale 4. \
+    # --compute-nfe \
     # --measure-time \
 
 # torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/sample_sit_ddp.py SDE \

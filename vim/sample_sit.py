@@ -99,8 +99,13 @@ def main(mode, args):
 
     # Labels to condition the model with (feel free to change):
     use_label = True if args.num_classes > 1 else False
+    if use_label:
+        real_num_classes = args.num_classes - 1 # not count uncond cls
+    else:
+        real_num_classes = args.num_classes
+    
     use_cfg = args.cfg_scale > 1.0
-    class_labels = [207, 360, 387, 974, 88, 979, 417, 279]
+    class_labels = [108] * args.global_batch_size  # [207, 360, 387, 974, 88, 979, 417, 279]
     n = len(class_labels) if use_label else args.global_batch_size
 
     # Create sampling noise:
@@ -110,7 +115,7 @@ def main(mode, args):
     # Setup classifier-free guidance:
     if use_cfg:
         z = torch.cat([z, z], 0)
-        y_null = torch.tensor([args.num_classes] * n, device=device)
+        y_null = torch.tensor([real_num_classes] * n, device=device)
         y = torch.cat([y, y_null], 0)
         model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
         model_fn = model.forward_with_cfg 
@@ -127,7 +132,7 @@ def main(mode, args):
             y = None if not use_label else torch.tensor(class_labels, device=device)
             if use_cfg:
                 z = torch.cat([z, z], 0)
-                y_null = torch.tensor([args.num_classes] * n, device=device)
+                y_null = torch.tensor([real_num_classes] * n, device=device)
                 y = torch.cat([y, y_null], 0)
                 model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
                 model_fn = model.forward_with_cfg 
@@ -173,7 +178,10 @@ def main(mode, args):
     print(f"Sampling took {time() - start_time:.2f} seconds.")
 
     # Save and display images:
-    save_image(samples, "sit_sample.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
+    if use_cfg:
+        save_image(samples, f"sit_{class_labels[0]}_sample_cfg{args.cfg_scale}.png", nrow=3, normalize=True, value_range=(-1, 1), pad_value=1.)
+    else:
+        save_image(samples, "sit_sample.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
 
 
 def none_or_str(value):

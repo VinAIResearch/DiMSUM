@@ -39,17 +39,19 @@ echo {gen_data}
 echo "----------------------------"
 
 python eval_toolbox/calc_metrics.py \
-    --metrics=fid{eval_mode}_full,pr{eval_mode}3_full \
+    --metrics=pr{eval_mode}3_full \
     --data={real_data} \
     --mirror=1 \
     --gen_data={gen_data} \
     --img_resolution=256 \
     --run_dir={slurm_output} \
 
+# fid{eval_mode}_full,
+
 """
 
 ###### ARGS
-real_data = "real_samples/celeba_256/"
+real_data = "../MambaDiff/real_samples/imagenet_256_crop/" # "real_samples/celeba_256/"
 
 BASE_PORT = 18015
 num_gpus = 1
@@ -58,13 +60,13 @@ eval_mode = ["10k", "50k"][1]
 
 # 
 config = pd.DataFrame({
-    "gen_data": ["samples/idiml2_gatedmlp_alterorders_celeb256_GVP_condmamba_fourierblk/DiM-L-2-0000300-cfg-1.0-128-ODE-250-dopri5"], # list(sorted(glob("samples/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/*/"))),
+    "gen_data": ["samples-50k/imnet256/DiM-L-2-0000510-cfg-1.0-64-ODE-250-dopri5/", "samples-50k/imnet256/DiM-L-2-0000510-cfg-1.4-64-ODE-250-dopri5/", "samples-50k/imnet256/DiM-L-2-0000510-cfg-1.5-64-ODE-250-dopri5/"], # list(sorted(glob("samples/idiml2_gatedmlp_alterorders_celeb256_gvp_logitnormalsample/*/"))),
 })
 print(config)
 
 ###################################
-slurm_file_path = "/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_sample_scripts/{exp}/run.sh"
-slurm_output = "/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_sample_scripts/{exp}/"
+slurm_file_path = "/lustre/scratch/client/vinai/users/haopt12/DiMSUMv1/slurm_sample_scripts/{exp}/run.sh"
+slurm_output = "/lustre/scratch/client/vinai/users/haopt12/DiMSUMv1/slurm_sample_scripts/{exp}/"
 os.makedirs(slurm_output, exist_ok=True)
 job_name = "test"
 

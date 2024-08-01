@@ -25,13 +25,13 @@ import math
 import argparse
 
 
-def create_npz_from_sample_folder(sample_dir, num=50_000):
+def create_npz_from_sample_folder(sample_dir, image_ext, num=50_000):
     """
     Builds a single .npz file from a folder of .jpg samples.
     """
     samples = []
     for i in tqdm(range(num), desc="Building .npz file from samples"):
-        sample_pil = Image.open(f"{sample_dir}/{i:06d}.jpg")
+        sample_pil = Image.open(f"{sample_dir}/{i:06d}.{image_ext}")
         sample_np = np.asarray(sample_pil).astype(np.uint8)
         samples.append(sample_np)
     samples = np.stack(samples)
@@ -82,7 +82,7 @@ def main(args):
     sample_folder_dir = f"{args.sample_dir}/{exp_name}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
-        print(f"Saving .jpg samples at {sample_folder_dir}")
+        print(f"Saving .{args.image_ext} samples at {sample_folder_dir}")
         if args.eta is not None:
             print("Using ddim sampler with eta = {}".format(args.eta))
     dist.barrier()
@@ -130,14 +130,14 @@ def main(args):
         # Save samples to disk as individual .jpg files
         for i, sample in enumerate(samples):
             index = i * dist.get_world_size() + rank + total
-            Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.jpg")
+            Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.{args.image_ext}")
         total += global_batch_size
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
-    # dist.barrier()
-    # if rank == 0:
-    #     create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
-    #     print("Done.")
+    dist.barrier()
+    if rank == 0:
+        create_npz_from_sample_folder(sample_folder_dir, args.image_ext, args.num_fid_samples)
+        print("Done.")
     dist.barrier()
     dist.destroy_process_group()
 
@@ -167,6 +167,7 @@ if __name__ == "__main__":
     parser.add_argument("--learn-sigma", action="store_true")
     parser.add_argument("--num-in-channels", type=int, default=4)
     parser.add_argument("--label-dropout", type=float, default=-1)
+    parser.add_argument("--image-ext", type=str, default="jpg")
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
 
