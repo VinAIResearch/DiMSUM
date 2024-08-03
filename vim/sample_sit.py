@@ -148,15 +148,17 @@ def main(mode, args):
     if args.measure_time:
         print("Measure time")
         # INIT LOGGERS
-        starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
         repetitions = 30
         timings = np.zeros((repetitions, 1))
         # GPU-WARM-UP
         for _ in range(10):
             _ = model_fn(z, torch.ones((n), device=device), **model_kwargs)
+        torch.cuda.synchronize()
+
         # MEASURE PERFORMANCE
         with torch.no_grad():
             for rep in tqdm(range(repetitions)):
+                starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
                 starter.record()
                 _ = sample_fn(z, model_fn, **model_kwargs)[-1]
                 ender.record()
