@@ -17,8 +17,9 @@ python vim/sample_sit.py ODE \
     --learnable-pe \
     --cond-mamba \
     --use-attn-every-k-layers 4 \
-    --cfg-scale 1. \
-    --measure-time \
+    --cfg-scale 3.8 \
+    --ada-cfg \
+    # --measure-time \
     # --compute-nfe \
 
 # torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/sample_sit_ddp.py SDE \

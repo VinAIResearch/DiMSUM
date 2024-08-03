@@ -2615,6 +2615,29 @@ class DiM(nn.Module):
         eps = torch.cat([half_eps, half_eps], dim=0)
         return torch.cat([eps, rest], dim=1)
 
+    def forward_with_adacfg(self, x, t, y=None, inference_params=None, cfg_scale=3.8, scale_pow=4.0, **kwargs):
+        """
+        Forward pass of DiT, but also batches the unconditional forward pass for classifier-free guidance.
+        """
+        if cfg_scale is not None:
+            half = x[: len(x) // 2]
+            combined = torch.cat([half, half], dim=0)
+            model_out = self.forward(combined, t, y, inference_params)
+            eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
+            cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
+            scale_step = (
+                1-torch.cos(((1-t)**scale_pow)*math.pi))*1/2 # power-cos scaling 
+            real_cfg_scale = (cfg_scale-1)*scale_step + 1
+            real_cfg_scale = real_cfg_scale[: len(x) // 2].view(-1, 1, 1, 1)
+
+            half_eps = uncond_eps + real_cfg_scale * (cond_eps - uncond_eps)
+            eps = torch.cat([half_eps, half_eps], dim=0)
+            return torch.cat([eps, rest], dim=1)
+        else:
+            model_out = self.forward(x, t, y, inference_params)
+            eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
+            return torch.cat([eps, rest], dim=1)
+
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return {
             i: blk.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
