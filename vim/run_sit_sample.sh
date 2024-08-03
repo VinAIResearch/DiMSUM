@@ -17,7 +17,8 @@ python vim/sample_sit.py ODE \
     --learnable-pe \
     --cond-mamba \
     --use-attn-every-k-layers 4 \
-    --cfg-scale 4. \
+    --cfg-scale 3.8 \
+    --ada-cfg \
     # --compute-nfe \
     # --measure-time \
 

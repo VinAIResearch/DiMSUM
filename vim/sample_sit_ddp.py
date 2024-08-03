@@ -173,7 +173,7 @@ def main(mode, args):
             y_null = torch.tensor([real_num_classes] * n, device=device)
             y = torch.cat([y, y_null], 0)
             model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
-            model_fn = model.forward_with_cfg
+            model_fn = model.forward_with_cfg if not args.ada_cfg else model.forward_with_adacfg
         else:
             model_kwargs = dict(y=y)
             model_fn = model.forward
@@ -277,6 +277,7 @@ if __name__ == "__main__":
     parser.add_argument("--not-use-gated-mlp", action="store_true")
     parser.add_argument("--use-even-classes", action="store_true")
     parser.add_argument("--image-ext", type=str, default="jpg")
+    parser.add_argument("--ada-cfg", action="store_true", help="Use adaptive cfg as MDT")
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
