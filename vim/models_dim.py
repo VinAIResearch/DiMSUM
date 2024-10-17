@@ -964,6 +964,38 @@ class WaveDiMBlock(nn.Module):
             out = self.idwt(torch.cat(subbands, dim=1))
         return rearrange(out, "b c h w -> b (h w) c") # [b, c, h, w]
 
+    def _dwt_fast(self, x):
+        # support only two-levels wavelet
+        x = rearrange(x, "b (h w) c -> b c h w", h=int(np.sqrt(x.size(1))))
+        subbands = self.dwt(x) # xll, xlh, xhl, xhh where each has shape of [b, c, h/2, w/2]
+        scale = 2 ** self.num_wavelet_lv
+        patch_size = scale # old: 4
+        if self.num_wavelet_lv > 1:
+            out = (self.dwt(subbands) / scale).chunk(patch_size * patch_size, dim=1)
+            indices = []
+            for i in range(patch_size * patch_size):
+                indices.append(i%4 * patch_size + i//4)
+            out = torch.cat([out[i] for i in indices], dim=1)
+        else:
+            out = subbands / scale
+        return rearrange(out, "b (c p1 p2) h w -> b (h p1 w p2) c", p1=patch_size, p2=patch_size) # [b, c, h, w]
+    
+    def _idwt_fast(self, x):
+        scale = 2 ** self.num_wavelet_lv
+        patch_size = scale # old: 4
+        lowest_size = int(np.sqrt(x.size(1))) // patch_size
+        subbands = rearrange(x * scale, "b (h p1 w p2) c -> b (c p1 p2) h w", p1=patch_size, p2=patch_size, h=lowest_size).chunk(patch_size * patch_size, dim=1)
+        if self.num_wavelet_lv > 1:
+            indices = []
+            for i in range(patch_size * patch_size):
+                indices.append(i%4 * patch_size + i//4)
+            subbands = torch.cat([subbands[i] for i in indices], dim=1)
+            out = self.idwt(subbands)
+            out = self.idwt(out)   
+        else:
+            out = self.idwt(torch.cat(subbands, dim=1))
+        return rearrange(out, "b c h w -> b (h w) c") # [b, c, h, w]
+
     def forward(
         self, hidden_states: Tensor, residual: Optional[Tensor] = None, c: Optional[Tensor] = None, inference_params=None
     ):  
@@ -1048,7 +1080,7 @@ class WaveDiMBlock(nn.Module):
 
         l = hidden_states.shape[1]
         h = w = int(np.sqrt(l))
-        hidden_states = self._dwt(hidden_states).contiguous()
+        hidden_states = self._dwt_fast(hidden_states).contiguous()
         patch_size = int(2 ** self.num_wavelet_lv) # old: 4
         if self.window_scan:
             column_first = True if self.transpose else False
@@ -1101,7 +1133,7 @@ class WaveDiMBlock(nn.Module):
             if self.transpose:
                 hidden_states = rearrange(hidden_states, 'n (h w) c -> n (w h) c', h=h, w=w)
                 # residual = rearrange(residual, 'n (h w) c -> n (w h) c', h=h, w=w)   
-        hidden_states = self._idwt(hidden_states).contiguous()
+        hidden_states = self._idwt_fast(hidden_states).contiguous()
         
         return hidden_states, residual
 
@@ -2582,6 +2614,29 @@ class DiM(nn.Module):
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
         return torch.cat([eps, rest], dim=1)
+
+    def forward_with_adacfg(self, x, t, y=None, inference_params=None, cfg_scale=3.8, scale_pow=4.0, **kwargs):
+        """
+        Forward pass of DiT, but also batches the unconditional forward pass for classifier-free guidance.
+        """
+        if cfg_scale is not None:
+            half = x[: len(x) // 2]
+            combined = torch.cat([half, half], dim=0)
+            model_out = self.forward(combined, t, y, inference_params)
+            eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
+            cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
+            scale_step = (
+                1-torch.cos(((1-t)**scale_pow)*math.pi))*1/2 # power-cos scaling 
+            real_cfg_scale = (cfg_scale-1)*scale_step + 1
+            real_cfg_scale = real_cfg_scale[: len(x) // 2].view(-1, 1, 1, 1)
+
+            half_eps = uncond_eps + real_cfg_scale * (cond_eps - uncond_eps)
+            eps = torch.cat([half_eps, half_eps], dim=0)
+            return torch.cat([eps, rest], dim=1)
+        else:
+            model_out = self.forward(x, t, y, inference_params)
+            eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
+            return torch.cat([eps, rest], dim=1)
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return {

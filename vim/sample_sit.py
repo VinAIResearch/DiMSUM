@@ -33,6 +33,10 @@ class NFECount(nn.Module):
     def forward_with_cfg(self, x, t, *args, **kwargs):
         self.nfe += 1.0
         return self.model.forward_with_cfg(x, t, *args, **kwargs)
+
+    def forward_with_adacfg(self, x, t, *args, **kwargs):
+        self.nfe += 1.0
+        return self.model.forward_with_adacfg(x, t, *args, **kwargs)
     
     def reset_nfe(self):
         self.nfe = torch.tensor(0.0)
@@ -105,7 +109,7 @@ def main(mode, args):
         real_num_classes = args.num_classes
     
     use_cfg = args.cfg_scale > 1.0
-    class_labels = [108] * args.global_batch_size  # [207, 360, 387, 974, 88, 979, 417, 279]
+    class_labels = [0] * args.global_batch_size  # [207, 360, 387, 974, 88, 979, 417, 279]
     n = len(class_labels) if use_label else args.global_batch_size
 
     # Create sampling noise:
@@ -118,7 +122,7 @@ def main(mode, args):
         y_null = torch.tensor([real_num_classes] * n, device=device)
         y = torch.cat([y, y_null], 0)
         model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
-        model_fn = model.forward_with_cfg 
+        model_fn = model.forward_with_cfg if not args.ada_cfg else model.forward_with_adacfg
     else:
         model_kwargs = dict(y=y)
         model_fn = model.forward 
@@ -148,15 +152,17 @@ def main(mode, args):
     if args.measure_time:
         print("Measure time")
         # INIT LOGGERS
-        starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
         repetitions = 30
         timings = np.zeros((repetitions, 1))
         # GPU-WARM-UP
         for _ in range(10):
             _ = model_fn(z, torch.ones((n), device=device), **model_kwargs)
+        torch.cuda.synchronize()
+
         # MEASURE PERFORMANCE
         with torch.no_grad():
             for rep in tqdm(range(repetitions)):
+                starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
                 starter.record()
                 _ = sample_fn(z, model_fn, **model_kwargs)[-1]
                 ender.record()
@@ -220,6 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-final-norm", action="store_true")
     parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
     parser.add_argument("--not-use-gated-mlp", action="store_true")
+    parser.add_argument("--ada-cfg", action="store_true", help="Use adaptive cfg as MDT")
 
     parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4'])
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
