@@ -150,3 +150,86 @@ body {
 #interpolation-image-wrapper img {
   border-radius: 5px;
 }
+
+.carousel-control-prev {
+ margin-left: -10px;
+ max-height: 500px;
+ }
+ .carousel-control-next {
+ margin-right: -10px;
+ max-height: 500px;
+ }
+ .carousel-item {
+ /* height: 234px; */
+ overflow: hidden;
+ /* width: 100%; */
+ text-align: center;
+ }
+ .carousel-item img {
+  /* width: 80%; */
+ }
+
+ .carousel {
+  /* max-height: 80%; */
+  max-width: 80%;
+  overflow: hidden;
+}
+
+.carousel .carousel-control-next-icon,
+.carousel-control-prev-icon {
+  filter: invert(1);
+}
+
+ .carousel-inner .item img {
+ margin:auto;
+ }
+
+ .carousel-control-next,.carousel-control-prev{
+ opacity:1
+ }
+ .carousel-control-next:focus,.carousel-control-next:hover,.carousel-control-prev:focus,.carousel-control-prev:hover{
+ opacity:1
+ }
+ .slider-navigation-next,.slider-navigation-previous{
+ display:flex;
+ justify-content:center;
+ align-items:center;
+ position:absolute;
+ width:21px;
+ height:42px;
+ background:gray center center no-repeat;
+ background-size:20px 20px;
+ border:1px solid #fff;
+ border-radius:25091983px;
+ box-shadow:0 2px 5px #3232321a;
+ top:50%;
+ margin-top:-20px;
+ left:0;
+ cursor:pointer;
+ transition:transform .3s,opacity .3s,-webkit-transform .3s
+ }
+ .slider-navigation-next svg,.slider-navigation-previous svg{
+ width:25%;
+ background:gray
+ }
+ .slider-navigation-next{
+ left:auto;
+ right:0;
+ background:gray center center no-repeat;
+ background-size:20px 20px
+ }
+
+ .teaser-carousel {
+    width: 60%;
+    margin: auto;
+    height: 80%;
+    /* max-height: 540px; */
+ }
+
+ .carousel-control-next-icon {
+  background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='red' viewBox='0 0 8 8'%3E%3Cpath d='M2.75 0l-1.5 1.5 2.5 2.5-2.5 2.5 1.5 1.5 4-4-4-4z'/%3E%3C/svg%3E");
+}
+
+.carousel-control-prev-icon {
+  background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='red' viewBox='0 0 8 8'%3E%3Cpath d='M5.25 0l-4 4 4 4 1.5-1.5-2.5-2.5 2.5-2.5-1.5-1.5z'/%3E%3C/svg%3E");
+}

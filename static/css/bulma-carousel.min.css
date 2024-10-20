@@ -170,7 +170,7 @@
 }
 
 .hero.has-carousel {
-    position: relative
+    position: relative;
 }
 
 .hero.has-carousel+.hero-body,
