@@ -5,11 +5,11 @@ This project page is inherited from the [Nerfies website](https://nerfies.github
 If you find LFM useful for your work, please cite:
 
 ```
-@article{phung2024dimsum,
-    author  = {Phung, Hao and Dao, Quan and Dao, Trung and Phan, Hoang and Metaxas, Dimitris and Tran, Anh},
-    title   = {DiMSUM: Diffusion Mamba - A Scalable and Unified Spatial-Frequency Method for Image Generation},
-    journal = {arXiv preprint arXiv:id},
-    year    = {2024},
+@inproceedings{phung2024dimsum,
+   title={DiMSUM: Diffusion Mamba - A Scalable and Unified Spatial-Frequency Method for Image Generation},
+   author={Hao Phung, Quan Dao, Trung Dao, Hoang Phan, Dimitris Metaxas, Anh Tran},
+   booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
+   year= {2024},
 }
 ```
 
