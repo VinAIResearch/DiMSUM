@@ -99,7 +99,7 @@ def main(mode, args):
         )
     
 
-    vae = AutoencoderKL.from_pretrained(f"../stabilityai/sd-vae-ft-{args.vae}").to(device)
+    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
     # Labels to condition the model with (feel free to change):
     use_label = True if args.num_classes > 1 else False
@@ -109,7 +109,7 @@ def main(mode, args):
         real_num_classes = args.num_classes
     
     use_cfg = args.cfg_scale > 1.0
-    class_labels = [0] * args.global_batch_size  # [207, 360, 387, 974, 88, 979, 417, 279]
+    class_labels = [360] * args.global_batch_size  # [207, 360, 387, 974, 88, 393, 979, 417, 279, 972, 973, 980, 270]
     n = len(class_labels) if use_label else args.global_batch_size
 
     # Create sampling noise:
@@ -185,7 +185,7 @@ def main(mode, args):
 
     # Save and display images:
     if use_cfg:
-        save_image(samples, f"sit_{class_labels[0]}_sample_cfg{args.cfg_scale}.png", nrow=3, normalize=True, value_range=(-1, 1), pad_value=1.)
+        save_image(samples, f"sit_{class_labels[0]}_sample_cfg{args.cfg_scale}.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
     else:
         save_image(samples, "sit_sample.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
 

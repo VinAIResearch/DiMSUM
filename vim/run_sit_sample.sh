@@ -3,10 +3,10 @@ export MASTER_PORT=11121
 python vim/sample_sit.py ODE \
     --model DiM-L/2 \
     --image-size 256 \
-    --ckpt /lustre/scratch/client/scratch/research/group/anhgroup/haopt12/dimsum_public_models/celeb256_225ep.pt \
+    --ckpt /home/htp26/MambaDiff/results/imnet256/0000510.pt \
     --global-batch-size 32 \
     --path-type GVP \
-    --num-classes 1 \
+    --num-classes 1001 \
     --sampling-method dopri5 \
     --diffusion-form none \
     --num-sampling-steps 250 \
@@ -17,8 +17,8 @@ python vim/sample_sit.py ODE \
     --learnable-pe \
     --cond-mamba \
     --use-attn-every-k-layers 4 \
-    --cfg-scale 3.8 \
-    --ada-cfg \
+    --cfg-scale 4.0 \
+    # --ada-cfg \
     # --measure-time \
     # --compute-nfe \
 
