@@ -2,7 +2,7 @@
 
 This project page is inherited from the [Nerfies website](https://nerfies.github.io).
 
-If you find LFM useful for your work, please cite:
+If you find DiMSUM useful for your work, please cite:
 
 ```
 @inproceedings{phung2024dimsum,
