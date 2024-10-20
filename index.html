@@ -306,14 +306,16 @@
           </div> -->
         <div id="results-carousel" class="carousel slide teaser-carousel" data-ride="carousel" data-interval="5000" >
           <div class="carousel-inner">
-          <ol class="carousel-indicators"></ol>
+          <!-- <ol class="carousel-indicators"></ol>
             <li data-target="#results-carousel" data-slide-to="0" class="active"></li>
             <li data-target="#results-carousel" data-slide-to="1"></li>
             <li data-target="#results-carousel" data-slide-to="2"></li>
-          </ol>
+          </ol> -->
           <div class="carousel-item">
-            <img src="static/images/sit_207_sample_cfg4.0.png"
-              class="interpolation-image" />
+            <div>
+              <img src="static/images/sit_207_sample_cfg4.0.png"
+                class="teaser-img" />
+            </div>
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1);">
               <div class="is-size-5 has-text-centered">
                 Class: 'Golden retriever' (207)
@@ -322,8 +324,10 @@
           </div>
 
           <div class="carousel-item active">
+            <div>
             <img src="static/images/sit_88_sample_cfg4.0.png"
-              class="interpolation-image" />
+              class="teaser-img" />
+            </div>
             <div class="card-content slider-text d-block w-80" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Macaw' (88)
@@ -332,8 +336,8 @@
           </div>
 
           <div class="carousel-item">
-            <img src="static/images/sit_279_sample_cfg4.0.png"
-              class="interpolation-image" />
+            <div><img src="static/images/sit_279_sample_cfg4.0.png"
+              class="teaser-img" /></div>
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Arctic fox' (279)
@@ -342,8 +346,8 @@
           </div>
 
           <div class="carousel-item">
-            <img src="static/images/sit_360_sample_cfg4.0.png"
-              class="interpolation-image" />
+            <div><img src="static/images/sit_360_sample_cfg4.0.png"
+              class="teaser-img" /></div>
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Otter' (360)
@@ -352,8 +356,8 @@
           </div>
 
           <div class="carousel-item">
-            <img src="static/images/sit_387_sample_cfg4.0.png"
-              class="interpolation-image" />
+            <div><img src="static/images/sit_387_sample_cfg4.0.png"
+              class="teaser-img" /></div>
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Red Panda' (387)
@@ -362,8 +366,8 @@
           </div>
 
           <div class="carousel-item">
-            <img src="static/images/sit_972_sample_cfg4.0.png"
-              class="interpolation-image" />
+            <div><img src="static/images/sit_972_sample_cfg4.0.png"
+              class="teaser-img" /></div>
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Cliff' (972)
@@ -372,8 +376,8 @@
           </div>
 
           <div class="carousel-item">
-            <img src="static/images/sit_980_sample_cfg4.0.png"
-              class="interpolation-image" />
+            <div><img src="static/images/sit_980_sample_cfg4.0.png"
+              class="teaser-img" /> </div>
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Volcano' (980)
@@ -383,7 +387,7 @@
 
           <div class="carousel-item">
             <img src="static/images/sit_992_sample_cfg4.0.png"
-              class="interpolation-image" />
+              class="teaser-img" />
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Agaric' (992)
@@ -393,7 +397,7 @@
 
           <div class="carousel-item">
             <img src="static/images/sit_417_sample_cfg4.0.png"
-              class="interpolation-image" />
+              class="teaser-img" />
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Ballon' (417)
@@ -403,7 +407,7 @@
 
           <div class="carousel-item">
             <img src="static/images/sit_393_sample_cfg4.0.png"
-              class="interpolation-image" />
+              class="teaser-img" />
             <div class="card-content slider-text" style="background-color: rgba(0,0,0,0.1)">
               <div class="is-size-5 has-text-centered">
                 Class: 'Anemone fish' (393)
@@ -413,17 +417,31 @@
 
         </div>
 
-        <a class="carousel-control-prev" href="#results-carousel" role="button" data-slide="prev">
-          <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+        <a class="carousel-control-prev" href="#results-carousel" role="button" data-slide="prev"></a>
+          <div class="slider-navigation-previous">
+              <svg viewBox="0 0 50 80" xml:space="preserve">
+                  <polyline fill="white" stroke-width=".5em" stroke-linecap="round"
+                      stroke-linejoin="round" points="45.63,75.8 0.375,38.087 45.63,0.375 ">
+                  </polyline>
+              </svg>
+          </div>
           <span class="sr-only">Previous</span>
         </a>
+
         <a class="carousel-control-next" href="#results-carousel" role="button" data-slide="next">
-          <span class="carousel-control-next-icon" aria-hidden="true"></span>
-          <span class="sr-only">Next</span>
+            <div class="slider-navigation-next">
+                <svg viewBox="0 0 50 80" xml:space="preserve">
+                    <polyline fill="white" stroke-width=".5em" stroke-linecap="round"
+                        stroke-linejoin="round" points="0.375,0.375 45.63,38.087 0.375,75.8 ">
+                    </polyline>
+                </svg>
+            </div>
+            <span class="sr-only">Next</span>
         </a>
       </div>
       </div>
       </div>
+
       <!-- <div class="column is-centered ">
           <div class="content has-text-centered">
         TL;DR: We propose DiMSUM, a hybrid Mamba-Transformer diffusion model that synergistically leverages both spatial and frequency information for high-quality image synthesis.</td>
