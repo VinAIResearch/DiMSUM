@@ -252,3 +252,8 @@ background-color: #F2E34C;
   -webkit-mask-image: var(--mask-image);
   mask-image: var(--mask-image);
 }
+
+@media (max-width:600px) {
+    .about-us-text,
+    .about-us-images { width:100% } 
+}

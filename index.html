@@ -108,7 +108,7 @@
       <div class="container is-max-desktop">
         <div class="columns is-centered">
           <div class="column has-text-centered">
-            <h1 class="title is-1 publication-title">DiMSUM <img src="./static/images/dimsum_icon.png" class="logo" width=5.5% />: <span style="color:red;">Di</span>ffusion <span style="color:red;">M</span>amba - A <span style="color:red;">S</span>calable and <span style="color:red;">U</span>nified
+            <h1 class="title is-1 publication-title">DiMSUM <img src="./static/images/dimsum_icon.png" class="logo" width="50px" />: <span style="color:red;">Di</span>ffusion <span style="color:red;">M</span>amba - A <span style="color:red;">S</span>calable and <span style="color:red;">U</span>nified
                 Spatial-Frequency <span style="color:red;">M</span>ethod for Image Generation</h1>
             <div class="is-size-5 publication-authors">
               <span class="author-block">
@@ -124,10 +124,10 @@
                 <a href="https://viethoang1512.github.io/">Hoang Phan</a><sup>4</sup>&emsp;
               </span>
               <span class="author-block">
-                <a href="https://people.cs.rutgers.edu/~dnm/">Dimitris N. Metaxas</a><sup>3</sup>&emsp;
+                <a href="https://people.cs.rutgers.edu/~dnm/">Dimitris N. Metaxas</a><sup>2</sup>&emsp;
               </span>
               <span class="author-block">
-                <a href="https://sites.google.com/site/anhttranusc/">Anh Tran</a><sup>1</sup>
+                <a href="https://scholar.google.com/citations?user=FYZ5ODQAAAAJ">Anh Tran</a><sup>1</sup>
               </span>
             </div>
 
@@ -524,11 +524,10 @@
 
           <!-- Motivation -->
           <h2 class="title is-3">Why is scanning in frequency space helpful?</h2>
-          <div class="columns is-centered"> 
+          <div class="columns is-centered" style="text-align: center;"> 
             <img src="./static/images/wavelet_vs_spatial_window.png" width="60%" class="scanning" />
           </div>
           <div class="content has-text-justified">
-
             <p>
                 Previous state-space models, particularly in processing visual data, failed to effectively address the design choice of scanning order due to their exclusive reliance on spatial processing, neglecting crucial long-range relations in the frequency spectrum. 
                 We propose a novel approach that integrates frequency scanning with the conventional spatial scanning mechanism.
@@ -595,88 +594,58 @@
       <div class="column is-full-width">
         <h2 class="title is-3">Results</h2>
       </div>
+      <div class="columns is-centered" style="text-align: center;">
+        <table>
+          <tr>
+            <td><img src="./static/images/celeb256.jpg" width="90%" /> </td>
+            <td> <img src="./static/images/celeb512.jpg" width="90%"  /> </td>
+          </tr>
+          <caption style="text-align: center; color: black">Figure 1. Unconditional generation on CelebA HQ 256 & 512</caption>
+        </table>
+      </div>
+      <div class="columns is-centered" style="text-align: center;">
+        <div class="column">
+          <figure >
+            <img src="./static/images/training_convergence.png" class="interpolation-image" width="70%"/>
+            <figcaption>Figure 2. Training convergence on CelebA HQ 256.</figcaption>
+          </figure>
+        </div>
+        <div class="column">
+          <figure>
+            <img src="./static/images/church256.jpg" class="interpolation-image" width="90%" />
+            <figcaption>Figure 3. Unconditional generation on LSUN Church</figcaption>
+          </figure>
+        </div>
+      </div>
+      <div class="columns is-centered" style="text-align: center;">
+      </div>
       <div class="columns is-centered">
         <div class="column">
           <div class="content">
-            <figure>
-              <img src="./static/images/celeb256.jpg" class="interpolation-image" width=45% style="margin-right: 60px;" />
-              <img src="./static/images/celeb512.jpg" class="interpolation-image" width=45% />
-              <figcaption>Figure 1. Unconditional generation on CelebA HQ</figcaption>
-            </figure>
-
-          </div>
-        </div>
-      </div>
-      <br> 
-      </div>
-      <div class="columns is-centered">
-        <div class="column" style="margin-left: 13%;">
-          <div class="content">
-            <figure>
-              <img src="./static/images/church256.jpg" class="interpolation-image" width=70% />
-              <figcaption>Figure 2. Unconditional generation on LSUN Church</figcaption>
-            </figure>
-          </div>
-          <!-- <div class="content">
-            <figure>
-              <img src="./static/images/imnet.jpg" class="interpolation-image" width=35% />
-              <figcaption>Figure 3. Class-conditional generation on ImageNet1k 256</figcaption>
-            </figure>
-          </div> -->
-        </div>
-        <div class="column">
-          <div class="content" style="margin-left: -42%;">
             <figure>
               <img src="./static/images/imnet.jpg" class="interpolation-image" width=60% />
-              <figcaption>Figure 3. Class-conditional generation on ImageNet1k 256</figcaption>
-            </figure>
-          </div>
-        </div>
-        <!-- <div class="column">
-          <div class="content">
-            <figure>
-              <img src="./static/images/training_convergence.png" class="interpolation-image" width=35% />
-              <figcaption style="margin-left: 400px; margin-right: 400px;">
-                Figure 4. Training convergence on CelebA HQ 256.
-                Our method achieves faster training convergence, requiring fewer than half the training epochs compared to other diffusion models, while delivering a more stable training curve.
-              </figcaption>
-            </figure>
-          </div>
-        </div> -->
-      </div>
-      <div class="columns is-centered">
-        <div class="column">
-          <div class="content">
-            <figure>
-              <img src="./static/images/training_convergence.png" class="interpolation-image" width=35% />
-              <figcaption style="margin-left: 400px; margin-right: 400px;">
-                Figure 4. Training convergence on CelebA HQ 256.
-                Our method achieves faster training convergence, requiring fewer than half the training epochs compared to other diffusion models, while delivering a more stable training curve.
-              </figcaption>
+              <figcaption>Figure 4. Class-conditional generation on ImageNet1k 256</figcaption>
             </figure>
           </div>
         </div>
       </div>
   </section>
-
-  <!-- <section class="section" id="bound">
-    <div class="container is-max-desktop content">
-      <h2 class="title">Theoretical analysis: Bounding estimation error</h2>
-      <div class="content has-text-justified">
-        We have shown that minimizing the FM objective on latent space controls the Wasserstein distance between the
-        target density \( p_0 \) and the reconstructed density \( \hat{p}_0 \), which coincides with Fréchet inception
-        distance (FID), a common metric for image generation.
-        This means that our latent flow matching is guaranteed to control this metric, given reasonable estimation of \(
-        \hat{v}(\mathbf{z}_t, t) \). Nonetheless, the analysis also suggests that the quality of latent flow matching
-        depends on the constants that define the expressivity of the decoders and encoders, which has been observed in
-        prior research on generative modeling in latent space.
-
-        <img src="./static/images/bound.jpeg" class="interpolation-image" />
-
-
+  
+  
+  <section class="section" id="speed">
+    <div class="container is-max-desktop">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Speed</h2>
       </div>
-    </div>
-  </section> -->
+      <div class="container is-max-desktop content" style="text-align: center;">
+        <div>
+          <img src="./static/images/speed.jpg" class="interpolation-image" width="80%"/>
+        </div>
+        <div class="content has-text-justified">
+          The speed gap between our method and DiT widens as the input resolution increases, highlighting the efficiency of our method for high-resolution synthesis.
+        </div>
+      </div>
+  </section>
 
   <!-- <section class="section" id="Related">
     <div class="container is-max-desktop content">
