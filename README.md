@@ -39,7 +39,8 @@ Spatial-Frequency Method for Image Generation" <a href=""> (NeurIPS'24)</a></h1>
 <div align="center">
 <img src="assets/dim_arch.png" />
 </div>
-TL;DR: We propose DiMSUM, a hybrid Mamba-Transformer diffusion model that synergistically leverages both spatial and frequency information for high-quality image synthesis.
+
+We propose DiMSUM, a hybrid Mamba-Transformer diffusion model that synergistically leverages both spatial and frequency information for high-quality image synthesis. Through extensive experiments on standard benchmarks, our method achieves state-of-the-art results, with a FID of 4.62 on CelebHQ 256, 3.76 on LSUN Church, and 2.11 on ImageNet1k 256. Additionally, our approach attains faster training convergence compared to Zigma and other diffusion methods. In detail, our method outperforms both DiT and SiT while requiring less than a third of the training iterations, achieving the best FID score of 2.11.
 
 Details of the model architecture and experimental results can be found in our following paper:
 
