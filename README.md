@@ -16,7 +16,8 @@ Spatial-Frequency Method for Image Generation" <a href=""> (NeurIPS'24)</a></h1>
 <div align="center">
   <a href="https://hao-pt.github.io/" target="_blank">Hao&nbsp;Phung</a><sup>*13&dagger;</sup> &emsp; <b>&middot;</b> &emsp;
   <a href="https://quandao10.github.io/" target="_blank">Quan&nbsp;Dao</a><sup>*12&dagger;</sup> &emsp; <b>&middot;</b> &emsp;
-  <a href="https://termanteus.com/" target="_blank">Trung&nbsp;Dao</a><sup>1</sup> &emsp; <b>&middot;</b> &emsp;
+  <a href="https://termanteus.com/" target="_blank">Trung&nbsp;Dao</a><sup>1</sup>
+  <br> <br>
   <a href="https://viethoang1512.github.io/" target="_blank">Hoang&nbsp;Phan</a><sup>4</sup> &emsp; <b>&middot;</b> &emsp;
   <a href="https://people.cs.rutgers.edu/~dnm/" target="_blank"> Dimitris&nbsp;N. Metaxas</a><sup>2</sup> &emsp; <b>&middot;</b> &emsp;
   <a href="https://sites.google.com/site/anhttranusc/" target="_blank">Anh&nbsp;Tran</a><sup>1</sup>
