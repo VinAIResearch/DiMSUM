@@ -1,5 +1,5 @@
 ## CelebA 256 
-python vim/sample_sit.py ODE \
+python dimsum/sample_sit.py ODE \
     --model DiM-L/2 \
     --image-size 256 \
     --ckpt celeb256_225ep.pt \
@@ -20,7 +20,7 @@ python vim/sample_sit.py ODE \
     # --measure-time \
 
 # ## Church
-# python vim/sample_sit.py ODE \
+# python dimsum/sample_sit.py ODE \
 #     --model DiM-L/2 \
 #     --image-size 256 \
 #     --ckpt church_395ep.pt \

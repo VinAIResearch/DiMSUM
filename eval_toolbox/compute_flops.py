@@ -93,42 +93,17 @@ if __name__ == '__main__':
     pytorch_total_params = sum(p.numel() for p in model.parameters())
     print("Model size: {:.3f}MB".format(pytorch_total_params / 1000**2))
 
-    # # Calc 300 times for better acc
-    # mem = 0 # measure_mem(model, 1, device, args)
-    # throughput = measure_gpu_throughput(model, args.batch_size, device, args)
-    # print("Mem usage: {} (GB), Throughput: {} (imgs/s)".format(mem, throughput))
-
-    # flops = FlopCountAnalysis(model, (x, t, c))
-    # print(flop_count_table(flops))
-    # print(flops.total())
+    # Calc 300 times for better acc
+    mem = 0 # measure_mem(model, 1, device, args)
+    throughput = measure_gpu_throughput(model, args.batch_size, device, args)
+    print("Mem usage: {} (GB), Throughput: {} (imgs/s)".format(mem, throughput))
 
     x = torch.randn(1, args.num_in_channels, args.image_size//8, args.image_size//8).to(device)
     t = torch.ones(1).to(device)
     c = torch.zeros(1).to(device, dtype=torch.int)
     
-    # print("%s | %s" % ("Params(M)", "FLOPs(G)"))
-    # print("---|---")
-    # total_ops, total_params = profile(model, (x, t, c), verbose=False)
-    # print(
-    #     "%.2f | %.2f" % (total_params / (1000 ** 2), total_ops / (1000 ** 3))
-    # )
-
     flops, macs, params = calculate_flops(model=model, 
                                       kwargs={'x': x, 't': t, 'y': c},
                                       output_as_string=False,
                                       output_precision=4)
     print("GFLOPs:%.2f Params:%.2fM \n" %(flops/2/10**9, params/10**6))
-    
-    # with get_accelerator().device(0):
-    #     flops, macs, params = get_model_profile(model=model, # model
-    #                                     input_shape=(args.batch_size, args.num_in_channels, args.image_size//8, args.image_size//8), # input shape to the model. If specified, the model takes a tensor with this shape as the only positional argument.
-    #                                     args=None, # list of positional arguments to the model.
-    #                                     kwargs={'t': t, 'c': c}, # dictionary of keyword arguments to the model.
-    #                                     print_profile=True, # prints the model graph with the measured profile attached to each module
-    #                                     detailed=True, # print the detailed profile
-    #                                     module_depth=-1, # depth into the nested modules, with -1 being the inner most modules
-    #                                     top_modules=1, # the number of top modules to print aggregated profile
-    #                                     warm_up=10, # the number of warm-ups before measuring the time of each module
-    #                                     as_string=True, # print raw numbers (e.g. 1000) or as human-readable strings (e.g. 1k)
-    #                                     output_file="flop.log", # path to the output file. If None, the profiler prints to stdout.
-    #                                     ignore_modules=None) # the list of modules to ignore in the profiling

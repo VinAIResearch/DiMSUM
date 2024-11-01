@@ -1,7 +1,7 @@
 MASTER_PORT=18036
 
 ## CelebA 256
-CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/sample_sit_ddp.py ODE \
+CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 dimsum/sample_sit_ddp.py ODE \
     --model DiM-L/2 \
     --per-proc-batch-size 128 \
     --image-size 256 \
@@ -24,7 +24,7 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT 
     --use-attn-every-k-layers 4 \
     
 ## Church
-# CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 vim/sample_sit_ddp.py ODE \
+# CUDA_VISIBLE_DEVICES=0 torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 dimsum/sample_sit_ddp.py ODE \
 #     --model DiM-L/2 \
 #     --per-proc-batch-size 128 \
 #     --image-size 256 \
