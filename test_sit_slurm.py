@@ -18,10 +18,10 @@ slurm_template = """#!/bin/bash -e
 #SBATCH --mail-user=v.haopt12@vinai.io
 #SBATCH --ntasks=1
 
-module purge
-module load python/miniconda3/miniconda3
-eval "$(conda shell.bash hook)"
-conda activate ../envs/mamba
+# module purge
+# module load python/miniconda3/miniconda3
+# eval "$(conda shell.bash hook)"
+# conda activate ../envs/mamba
 
 export MASTER_PORT={master_port}
 export WORLD_SIZE=1
@@ -42,12 +42,12 @@ echo "----------------------------"
 
 CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node={num_gpus} vim/sample_sit_ddp.py {sampler} \
     --model $MODEL_TYPE \
-    --per-proc-batch-size 128 \
+    --per-proc-batch-size 64 \
     --image-size {image_size} \
     --ckpt {ckpt_root}/{epoch:07d}.pt \
     --num-fid-samples {num_fid_samples} \
     --path-type GVP \
-    --num-classes 1 \
+    --num-classes 1001 \
     --sampling-method {method} \
     --num-sampling-steps {num_steps} \
     --diffusion-form {diff_form} \
@@ -61,6 +61,8 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
     --learnable-pe \
     --cond-mamba \
     --use-attn-every-k-layers 4 \
+    --cfg-scale {cfg_scale} \
+    --image-ext png \
     # --use-final-norm \
     # --enable-fourier-layers \
     # --scanning-continuity \
@@ -78,30 +80,30 @@ CUDA_VISIBLE_DEVICES={device} torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTE
 
 ###### ARGS
 model_type = ["DiM-L/2", "DiM-L/4"][0] # or "DiT-L/2" or "adm"
-exp = "idiml2_combinedxcrossattn_alterorders_celeb256_GVP_condmamba_zigmasetting_wscanlrandtb_attnevery4"
-ckpt_root = f"results/{exp}/checkpoints/"
-real_data = ["real_samples/celeba_256", "../data/data1024x1024/"][0]
+exp = "imnet256"
+ckpt_root = f"results/{exp}/" # f"results/{exp}/checkpoints/"
+real_data = ["real_samples/celeba_256/", "../data/data1024x1024/", "../MambaDiff/real_samples/imagenet_256_crop/"][-1]
 image_size = [256, 1024][0]
-num_fid_samples = 10_000
+num_fid_samples = 50_000
 eval_metric = "fid{num_samples}k_full,pr{num_samples}k3_full".format(num_samples=num_fid_samples//1000)
-sample_dir = f"samples-{num_fid_samples//1000}k/{exp}"
+sample_dir = f"samples-{num_fid_samples//1000}k-png/{exp}"
 BASE_PORT = 18036
 num_gpus = 2
 device = "0,1"
 
 config = pd.DataFrame({
-    "epochs": list(range(25, 301, 25)),
-    "num_steps": [250]*12,
-    "methods": ['dopri5']*12,
-    "cfg_scale": [1.]*12,
-    "diff_form": ["none"]*12,
-    "sampler": ['ODE']*12,
+    "epochs": [510]*3,
+    "num_steps": [250]*3,
+    "methods": ['dopri5']*3,
+    "cfg_scale": [1, 1.5, 1.4],
+    "diff_form": ["none"]*3,
+    "sampler": ['ODE']*3,
 })
 print(config)
 
 ###################################
-slurm_file_path = f"/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_scripts/{exp}/run2.sh"
-slurm_output = f"/lustre/scratch/client/vinai/users/haopt12/MambaDiff/slurm_scripts/{exp}/"
+slurm_file_path = f"/lustre/scratch/client/vinai/users/haopt12/DiMSUMv1/slurm_scripts/{exp}/run2.sh"
+slurm_output = f"/lustre/scratch/client/vinai/users/haopt12/DiMSUMv1/slurm_scripts/{exp}/"
 output_log = f"{slurm_output}/log"
 os.makedirs(slurm_output, exist_ok=True)
 job_name = "test"
