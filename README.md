@@ -51,7 +51,7 @@ Details of the model architecture and experimental results can be found in our f
 }
 ```
 
-**Please CITE** our paper whenever this repository is used to help produce published results or incorporated into other software.
+**Please CITE** our paper and give us a :star: whenever this repository is used to help produce published results or incorporated into other software.
 
 
 ## Installation
