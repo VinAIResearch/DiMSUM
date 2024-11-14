@@ -43,7 +43,7 @@
 python dimsum/sample.py ODE \
     --model DiM-L/2 \
     --image-size 256 \
-    --ckpt /share/kuleshov/htp26/dimsum/imnet256_510ep.pt \
+    --ckpt imnet256_510ep.pt \
     --global-batch-size 64 \
     --path-type GVP \
     --num-classes 1001 \

@@ -8,7 +8,7 @@ eval "$(conda shell.bash hook)"
 conda activate dimsum
 
 ### CelebA 256
-# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=2 dimsum/train_sit.py \
+# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=2 dimsum/train.py \
 #         --exp dimsum_celeb256 \
 #         --model DiM-L/2 \
 #         --datadir ../data/celeba_256/celeba-lmdb/ \
@@ -33,7 +33,7 @@ conda activate dimsum
 #         --use-attn-every-k-layers 4 \
 
 ### CelebA 512
-# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=4 dimsum/train_sit.py \
+# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=4 dimsum/train.py \
 #         --exp dimsum_celeb512 \
 #         --model DiM-L/2 \
 #         --datadir ../data/celeba_512/celeba-lmdb/ \
@@ -60,7 +60,7 @@ conda activate dimsum
 
 
 ## Church
-# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=4 dimsum/train_sit.py \
+# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=4 dimsum/train.py \
 #         --exp dimsum_church \
 #         --model DiM-XL/2 \
 #         --datadir ../data/lsun/ \
@@ -85,7 +85,7 @@ conda activate dimsum
 #         --use-attn-every-k-layers 4 \
         
 ### ImageNet1k 256
-# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=8 dimsum/train_sit.py \
+# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=8 dimsum/train.py \
 #         --exp dimsum_imagenet256 \
 #         --model DiM-L/2 \
 #         --datadir ../data/imagenet \

@@ -13,7 +13,6 @@ import math
 import sys
 from pathlib import Path
 import gc
-import shutil
 
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
@@ -23,9 +22,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torchvision.datasets import ImageFolder
 from torchvision.utils import save_image
-from torchvision import transforms
 import numpy as np
 from collections import OrderedDict
 from PIL import Image
@@ -37,13 +34,11 @@ import logging
 import os
 from datasets_prep import get_dataset
 
-from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
 
 from tqdm import tqdm
 
 from create_model import create_model
-from ptflops import get_model_complexity_info
 from transport import create_transport, Sampler
 from models_dim import interpolate_pos_embed
 
