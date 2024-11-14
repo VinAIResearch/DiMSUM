@@ -7,11 +7,13 @@
 """
 A minimal training script for DiT using PyTorch DDP.
 """
+
 import datetime
 import math
 import sys
 from pathlib import Path
 import gc
+import shutil
 
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
@@ -37,16 +39,18 @@ from datasets_prep import get_dataset
 
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
-from download import find_model
+
 from tqdm import tqdm
-from ptflops import get_model_complexity_info
+
 from create_model import create_model
+from ptflops import get_model_complexity_info
+from transport import create_transport, Sampler
+from models_dim import interpolate_pos_embed
 
 eval_import_path = (Path(__file__).parent.parent / "eval_toolbox").resolve().as_posix()
 sys.path.append(eval_import_path)
 import dnnlib
 from pytorch_fid import metric_main, metric_utils
-
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -119,6 +123,21 @@ def center_crop_arr(pil_image, image_size):
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
 
 
+def adjust_learning_rate(optimizer, epoch, args):
+    """Decay the learning rate with half-cycle cosine after warmup"""
+    if epoch < args.warmup_epochs:
+        lr = args.lr * epoch / args.warmup_epochs 
+    else:
+        lr = args.min_lr + (args.lr - args.min_lr) * 0.5 * \
+            (1. + math.cos(math.pi * (epoch - args.warmup_epochs) / (args.epochs - args.warmup_epochs)))
+    for param_group in optimizer.param_groups:
+        if "lr_scale" in param_group:
+            param_group["lr"] = lr * param_group["lr_scale"]
+        else:
+            param_group["lr"] = lr
+    return lr
+
+
 #################################################################################
 #                                  Training Loop                                #
 #################################################################################
@@ -130,19 +149,25 @@ def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
     # Setup DDP:
-    dist.init_process_group("nccl", timeout=datetime.timedelta(seconds=5400))
-    assert args.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
+    dist.init_process_group("nccl")
+    # if "SLURM_PROCID" in os.environ:
+    #     rank = int(os.environ["SLURM_PROCID"])
+    #     gpu = rank % torch.cuda.device_count()
+    #     world_size = int(os.environ["WORLD_SIZE"], 1)
+    # else:
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
-    seed = args.global_seed * dist.get_world_size() + rank
+    world_size = dist.get_world_size()
+    assert args.global_batch_size % world_size == 0, f"Batch size must be divisible by world size."
+    seed = args.global_seed * world_size + rank
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
-    print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
+    print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
 
     # Setup an experiment folder:
     experiment_index = args.exp
     model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-    experiment_dir = f"{args.results_dir}/{experiment_index}-{model_string_name}"  # Create an experiment folder
+    experiment_dir = f"{args.results_dir}/{experiment_index}"  # Create an experiment folder 
     checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
     sample_dir = f"{experiment_dir}/samples"
     if rank == 0:
@@ -154,23 +179,70 @@ def main(args):
     else:
         logger = create_logger(None)
 
-
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
     model = create_model(args) # mamba_models[args.model]()
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    model = DDP(model.to(device), device_ids=[rank])
-    diffusion = create_diffusion(timestep_respacing="", learn_sigma=args.learn_sigma, gamma=args.loss_weighting_gamma)  # default: 1000 steps, linear noise schedule
-    vae = AutoencoderKL.from_pretrained(f"./vim/stabilityai/sd-vae-ft-{args.vae}").to(device)
-    logger.info(f"DiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
+    transport = create_transport(
+        args.path_type,
+        args.prediction,
+        args.loss_weight,
+        args.train_eps,
+        args.sample_eps,
+        path_args={
+            'diffusion_form': args.diffusion_form, 
+            'use_blurring': args.use_blurring, 
+            'blur_sigma_max': args.blur_sigma_max, 
+            'blur_upscale': args.blur_upscale},
+        t_sample_mode=args.t_sample_mode,
+    )  # default: velocity; 
+    transport_sampler = Sampler(transport)
+    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+    logger.info(f"iDiM Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-5, verbose=True)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs, eta_min=1e-6, verbose=True)
 
-    if args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
+    update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
+
+    if args.model_ckpt and os.path.exists(args.model_ckpt):
+        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
+        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
+        init_epoch = 0
+
+        state_dict = model.module.state_dict()
+        for i, k in enumerate(['x_embedder.proj.weight', 'final_layer.linear.weight', 'final_layer.linear.bias']):
+            #NOTE: fixed for DiM-L/4 to DiM-L/2
+            if k in checkpoint["model"] and checkpoint["model"][k].shape != state_dict[k].shape:
+                if i == 0:
+                    K1, K2 = state_dict[k].shape[2:]
+                    checkpoint["model"][k] = checkpoint["model"][k][:, :, :K1, :K2] # state_dict[k]
+                    checkpoint["ema"][k] = checkpoint["ema"][k][:, :, :K1, :K2] # state_dict[k]
+                else:
+                    Cin = state_dict[k].size(0)
+                    checkpoint["model"][k] = checkpoint["model"][k][:Cin]
+                    checkpoint["ema"][k] = checkpoint["ema"][k][:Cin]
+
+        # interpolate position embedding
+        interpolate_pos_embed(model.module, checkpoint["model"])
+        interpolate_pos_embed(ema, checkpoint["ema"])
+
+        msg = model.module.load_state_dict(checkpoint["model"], strict=True)
+        print(msg)
+
+        ema.load_state_dict(checkpoint["ema"])
+        opt.load_state_dict(checkpoint["opt"])
+        for g in opt.param_groups:
+            g['lr'] = args.lr
+        train_steps = 0
+
+        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
+        del checkpoint
+    elif args.resume or os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
         checkpoint = torch.load(checkpoint_file, map_location=torch.device(f'cuda:{device}'))
         init_epoch = checkpoint["epoch"]
@@ -180,19 +252,10 @@ def main(args):
         ema.load_state_dict(checkpoint["ema"])
         train_steps = checkpoint["train_steps"]
 
+        for g in opt.param_groups:
+            g['lr'] = args.lr
+
         logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
-        del checkpoint
-
-    elif args.model_ckpt and os.path.exists(args.model_ckpt):
-        checkpoint = torch.load(args.model_ckpt, map_location=torch.device(f'cuda:{device}'))
-        epoch = int(os.path.split(args.model_ckpt)[-1].split(".")[0])
-        init_epoch = epoch
-        model.module.load_state_dict(checkpoint["model"])
-        ema.load_state_dict(checkpoint["ema"])
-        opt.load_state_dict(checkpoint["opt"])
-        train_steps = 0
-
-        logger.info("=> loaded checkpoint (epoch {})".format(epoch))
         del checkpoint
     else:
         init_epoch = 0
@@ -202,14 +265,14 @@ def main(args):
     dataset = get_dataset(args)
     sampler = DistributedSampler(
         dataset,
-        num_replicas=dist.get_world_size(),
+        num_replicas=world_size,
         rank=rank,
         shuffle=True,
         seed=args.global_seed
     )
     loader = DataLoader(
         dataset,
-        batch_size=int(args.global_batch_size // dist.get_world_size()),
+        batch_size=int(args.global_batch_size // world_size),
         shuffle=False,
         sampler=sampler,
         num_workers=args.num_workers,
@@ -218,7 +281,7 @@ def main(args):
     )
     logger.info(f"Dataset contains {len(dataset):,} images ({args.datadir})")
 
-    
+    # Prepare models for training:
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     ema.eval()  # EMA model should always be in eval mode
 
@@ -229,7 +292,7 @@ def main(args):
     use_label = True if "imagenet" in args.dataset else False
 
     # Create sampling noise & label
-    sample_bs = 4
+    sample_bs = 2
     zs = torch.randn(sample_bs, 4, latent_size, latent_size, device=device)
     ys = None if not use_label else torch.randint(args.num_classes, size=(sample_bs,), device=device)
     use_cfg = args.cfg_scale > 1.0
@@ -244,23 +307,30 @@ def main(args):
         sample_model_kwargs = dict(y=ys)
         model_fn = ema.forward
 
+    use_latent = True if "latent" in args.dataset else False
     logger.info(f"Training for {args.epochs} epochs...")
     for epoch in range(init_epoch, args.epochs+1):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
-        for x, y in tqdm(loader):
+        for i, (x, y) in tqdm(enumerate(loader)):
+            # adjust_learning_rate(opt, i / len(loader) + epoch, args)
             x = x.to(device)
             y = None if not use_label else y.to(device)
-            with torch.no_grad():
-                # Map input images to latent space + normalize latents:
-                x = vae.encode(x).latent_dist.sample().mul_(0.18215)
-            t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
+            if not use_latent:
+                with torch.no_grad():
+                    # Map input images to latent space + normalize latents:
+                    x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             model_kwargs = dict(y=y)
-            loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
+            before_forward = torch.cuda.memory_allocated(device)
+            loss_dict = transport.training_losses(model, x, model_kwargs)
             loss = loss_dict["loss"].mean()
+            after_forward = torch.cuda.memory_allocated(device)
             opt.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+
             opt.step()
+            after_backward = torch.cuda.memory_allocated(device)
             update_ema(ema, model.module)
 
             # Log loss values:
@@ -275,18 +345,26 @@ def main(args):
                 # Reduce loss history over all processes:
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
-                avg_loss = avg_loss.item() / dist.get_world_size()
-                logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
+                avg_loss = avg_loss.item() / world_size
+                logger.info(
+                    f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, "
+                    f"Train Steps/Sec: {steps_per_sec:.2f}, "
+                    f"GPU Mem before forward: {before_forward/10**9:.2f}Gb, "
+                    f"GPU Mem after forward: {after_forward/10**9:.2f}Gb, "
+                    f"GPU Mem after backward: {after_backward/10**9:.2f}Gb"
+                )
                 # Reset monitoring variables:
                 running_loss = 0
                 log_steps = 0
                 start_time = time()
-        if not args.no_lr_decay:
-            scheduler.step()
+
+        # if not args.no_lr_decay:
+        #     scheduler.step()
 
         if rank == 0:
             # latest checkpoint
             if epoch % args.save_content_every == 0:
+                logger.info("Saving content.")
                 content = {
                     "epoch": epoch + 1,
                     "train_steps": train_steps,
@@ -296,7 +374,6 @@ def main(args):
                     "ema": ema.state_dict(),
                 }
                 torch.save(content, os.path.join(checkpoint_dir, "content.pth"))
-                logger.info("Saved content")
 
             # Save DiT checkpoint:
             if epoch % args.ckpt_every == 0 and epoch > 0:
@@ -305,21 +382,18 @@ def main(args):
                     "model": model.module.state_dict(),
                     "ema": ema.state_dict(),
                     "opt": opt.state_dict(),
-                    "args": args,
-                    "epoch": epoch,
-                    "train_step": train_steps,
+                    "args": args
                 }
                 checkpoint_path = f"{checkpoint_dir}/{epoch:07d}.pt"
                 torch.save(checkpoint, checkpoint_path)
                 logger.info(f"Saved checkpoint to {checkpoint_path}")
-            dist.barrier()
+            # dist.barrier()
 
         if rank == 0 and epoch % args.plot_every == 0:
+            logger.info("Generating EMA samples...")
             with torch.no_grad():
-                samples = diffusion.p_sample_loop(
-                    model_fn, zs.shape, zs, clip_denoised=False, model_kwargs=sample_model_kwargs, progress=True, device=device
-                )
-                dist.barrier()
+                sample_fn = transport_sampler.sample_ode() # default to ode sampling
+                samples = sample_fn(zs, model_fn, **sample_model_kwargs)[-1]
                 if use_cfg: #remove null samples
                     samples, _ = samples.chunk(2, dim=0)
                 samples = vae.decode(samples / 0.18215).sample
@@ -327,23 +401,26 @@ def main(args):
             # Save and display images:
             save_image(samples, f"{sample_dir}/image_{epoch:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
             del samples
+        # dist.barrier()
 
-        if epoch % args.eval_every == 0 and epoch > 0 or epoch == args.epochs - 1:
+        if epoch % args.eval_every == 0 and epoch > 0:
             ref_dir = Path(args.eval_refdir)
             if ref_dir.exists():
                 n = args.eval_bs
                 using_cfg = args.eval_cfg_scale > 1.0
-                global_batch_size = n * dist.get_world_size()
+                global_batch_size = n * world_size
                 total_samples = int(
                     math.ceil(args.eval_nsamples / global_batch_size)
                     * global_batch_size
                 )
-                samples_needed_this_gpu = int(total_samples // dist.get_world_size())
+                samples_needed_this_gpu = int(total_samples // world_size)
                 iterations = int(samples_needed_this_gpu // n)
                 pbar = range(iterations)
                 pbar = tqdm(pbar) if rank == 0 else pbar
                 total = 0
-                p = Path(checkpoint_dir) / f"fid_{epoch:04d}"
+                p = Path(experiment_dir) / f"fid{args.eval_nsamples}_epoch{epoch}"
+                # if p.exists() and rank == 0:
+                #     shutil.rmtree(p.as_posix())
                 p.mkdir(exist_ok=True, parents=True)
                 model.eval()
                 for _ in pbar:
@@ -358,33 +435,16 @@ def main(args):
                         y_null = torch.tensor([args.num_classes] * n, device=device)
                         y = torch.cat([y, y_null], 0)
                         sample_model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
-                        model_eval_fn = model.forward_with_cfg
+                        model_eval_fn = ema.forward_with_cfg # model.forward_with_cfg
                     else:
                         sample_model_kwargs = dict(y=y)
-                        model_eval_fn = model.forward
+                        model_eval_fn = ema.forward # model.forward
 
                     # Sample images:
-                    if args.eval_eta is None:
-                        samples = diffusion.p_sample_loop(
-                            model_eval_fn,
-                            z.shape,
-                            z,
-                            clip_denoised=False,
-                            model_kwargs=model_kwargs,
-                            progress=False,
-                            device=device,
-                        )
-                    else:
-                        samples = diffusion.ddim_sample_loop(
-                            model_eval_fn,
-                            z.shape,
-                            z,
-                            clip_denoised=False,
-                            model_kwargs=model_kwargs,
-                            progress=False,
-                            device=device,
-                            eta=args.eval_eta,
-                        )
+                    with torch.no_grad():
+                        sample_fn = transport_sampler.sample_ode() # default to ode sampling
+                        samples = sample_fn(z, model_eval_fn, **sample_model_kwargs)[-1]
+
                     if using_cfg:
                         samples, _ = samples.chunk(
                             2, dim=0
@@ -400,7 +460,7 @@ def main(args):
 
                     # Save samples to disk as individual .png files
                     for i, sample in enumerate(samples):
-                        index = i * dist.get_world_size() + rank + total
+                        index = i * world_size + rank + total
                         if index >= args.eval_nsamples:
                             break
                         pp = p / f"{index:06d}.jpg"
@@ -424,26 +484,32 @@ def main(args):
                     print("Calculating FID...")
                 result_dict = metric_main.calc_metric(metric="fid2k_full", 
                                                     dataset_kwargs=eval_args.dataset_kwargs,
-                                                    num_gpus=dist.get_world_size(),
+                                                    num_gpus=world_size,
                                                     rank=rank, 
                                                     device=device,
                                                     progress=progress,
                                                     gen_dataset_kwargs=eval_args.gen_dataset_kwargs,
                                                     cache=True)
                 if rank == 0:
-                    metric_main.report_metric(result_dict, run_dir=p.as_posix(), snapshot_pkl=p.as_posix())
+                    metric_main.report_metric(result_dict, run_dir=experiment_dir, snapshot_pkl=p.as_posix())
                 del result_dict, samples
                 gc.collect()
                 torch.cuda.empty_cache()
             else:
                 print(f"Reference directory {ref_dir} does not exist, skip eval")
             dist.barrier()
-
         
+
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
     logger.info("Done!")
     cleanup()
+
+
+def none_or_str(value):
+    if value == 'None':
+        return None
+    return value
 
 
 if __name__ == "__main__":
@@ -451,48 +517,75 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='cifar10', help='name of dataset')
     parser.add_argument("--exp", type=str, required=True)
-    parser.add_argument("--resume", type=str, default=None, required=False)
     parser.add_argument("--datadir", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--model", type=str, default="MambaDiffV1_XL_2")
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--image-size", type=int, choices=[256, 512, 1024], default=256)
     parser.add_argument("--num-in-channels", type=int, default=4)
-    parser.add_argument("--num-classes", type=int, default=-1)
+    parser.add_argument("--num-classes", type=int, default=0)
     parser.add_argument("--cfg-scale", type=float, default=1.)
     parser.add_argument("--label-dropout", type=float, default=-1)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
-    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="mse")  # Choice doesn't affect training
+    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=25)
     parser.add_argument("--save-content-every", type=int, default=5)
     parser.add_argument("--plot-every", type=int, default=5)
-    parser.add_argument("--learn-sigma", action="store_true")
-    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none'])
-
-    parser.add_argument("--num-moe-experts", type=int, default=8)
-    parser.add_argument("--mamba-moe-layers", type=str, nargs="*", default=None)
-    parser.add_argument("--is-moe", action="store_true")
-    parser.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
-    parser.add_argument("--gated-linear-unit", action="store_true")
-    parser.add_argument("--loss-weighting-gamma", type=float, default=None)
     parser.add_argument("--model-ckpt", type=str, default='')
     parser.add_argument("--resume", action="store_true")
-    
+    parser.add_argument("--learn-sigma", action="store_true")
+    parser.add_argument("--bimamba-type", type=str, default="v2", choices=['v2', 'none', 'zigma_8', 'sweep_8', 'jpeg_8', 'sweep_4', 'jpeg_2'])
+    parser.add_argument("--cond-mamba", action="store_true")
+    parser.add_argument("--scanning-continuity", action="store_true")
+    parser.add_argument("--enable-fourier-layers", action="store_true")
+    parser.add_argument("--rms-norm", action="store_true")
+    parser.add_argument("--fused-add-norm", action="store_true")
+    parser.add_argument("--drop-path", type=float, default=0.)
+    parser.add_argument("--use-final-norm", action="store_true")
+    parser.add_argument("--use-attn-every-k-layers", type=int, default=-1,)
+    parser.add_argument("--not-use-gated-mlp", action="store_true")
+    # parser.add_argument("--skip", action="store_true")
+        
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--pe-type", type=str, default="ape", choices=["ape", "cpe", "rope"])
-    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw"])
+    parser.add_argument("--learnable-pe", action="store_true")
+    parser.add_argument("--block-type", type=str, default="linear", choices=["linear", "raw", "wave", 
+        "combined", "window", "combined_fourier", "combined_einfft"])
     parser.add_argument("--no-lr-decay", action='store_true', default=False)
+    parser.add_argument('--min-lr', type=float, default=1e-6,)
+    parser.add_argument('--warmup-epochs', type=int, default=5,)
+    parser.add_argument('--max-grad-norm', type=float, default=2.,)
 
     group = parser.add_argument_group("Eval")
     group.add_argument("--eval-every", type=int, default=100)
     group.add_argument("--eval-refdir", type=str, default=None)
     group.add_argument("--eval-nsamples", type=int, default=1000)
     group.add_argument("--eval-bs", type=int, default=4)
-    group.add_argument("--eval-eta", type=float, default=0.6)
     group.add_argument("--eval-cfg-scale", type=float, default=1.0)
-    
+
+    group = parser.add_argument_group("MoE arguments")
+    group.add_argument("--num-moe-experts", type=int, default=8)
+    group.add_argument("--mamba-moe-layers", type=none_or_str, nargs="*", default=None)
+    group.add_argument("--is-moe", action="store_true")
+    group.add_argument("--routing-mode", type=str, choices=['sinkhorn', 'top1', 'top2', 'sinkhorn_top2'], default='top1')
+    group.add_argument("--gated-linear-unit", action="store_true")
+
+    group = parser.add_argument_group("Transport arguments")
+    group.add_argument("--path-type", type=str, default="Linear", choices=["Linear", "GVP", "VP"])
+    group.add_argument("--prediction", type=str, default="velocity", choices=["velocity", "score", "noise"])
+    group.add_argument("--loss-weight", type=none_or_str, default=None, choices=[None, "velocity", "likelihood"])
+    group.add_argument("--sample-eps", type=float)
+    group.add_argument("--train-eps", type=float)
+    group.add_argument("--diffusion-form", type=str, default="none", \
+                            choices=["none", "constant", "SBDM", "sigma", "linear", "decreasing", "increasing-decreasing", "log"],\
+                            help="form of diffusion coefficient in the SDE")
+    group.add_argument("--t-sample-mode", type=str, default="uniform")
+    group.add_argument("--use-blurring", action="store_true")
+    group.add_argument("--blur-sigma-max", type=int, default=3)
+    group.add_argument("--blur-upscale", type=int, default=4)
+
     args = parser.parse_args()
     main(args)
