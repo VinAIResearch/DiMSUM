@@ -5,8 +5,9 @@
 3. [Pretrained weights](#pretrained-weights)
 4. [Train](#train)
 5. [Evaluation](#evaluation)
-6. [Acknowledgments](#acknowledgments)
-7. [Contacts](#contacts)
+6. [Implementation details](#implementation-details)
+7. [Acknowledgments](#acknowledgments)
+8. [Contacts](#contacts)
 
 <div align="center">
 <h1>Official PyTorch implementation of "DiMSUM: Diffusion Mamba - A Scalable and Unified
@@ -72,6 +73,7 @@ Details of the model architecture and experimental results can be found in our f
   - `conda install conda-forge::cudatoolkit-dev`
   - `cd causal_conv1d && pip install -e . && cd ..`
   - `cd mamba && pip install -e . && cd ..`
+
 
 ## Data
 For CelebA HQ (256) and LSUN, please follow [this repo](https://github.com/NVlabs/NVAE.git) for dataset preparation.
@@ -145,6 +147,12 @@ To evaluate, select a relevant command and run:
 ```bash
 bash scripts/eval.sh
 ```
+
+## Implementation details
+- DiMSUM architecture is put in [dimsum/models_dim.py](dimsum/models_dim.py).
+- Conditional Mamba can be found in [mamba/mamba_ssm/ops/selective_scan_interface.py](mamba/mamba_ssm/ops/selective_scan_interface.py) and [causal-conv1d/csrc/causal_conv1d.cpp](causal-conv1d/csrc/causal_conv1d.cpp).
+- Frequency transformations: [dimsum/wavelet_layer.py](dimsum/wavelet_layer.py) and [dimsum/dct_layer.py](dimsum/dct_layer.py).
+- Mamba Scanning strategies: [dimsum/scanning_orders.py](dimsum/scanning_orders.py).
 
 ## Acknowledgments
 
