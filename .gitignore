@@ -6,6 +6,11 @@ mamba/mamba_ssm/ops/__pycache__/*
 mamba/mamba_ssm/modules/__pycache__/*
 mamba/mamba_ssm/__pycache__/*
 mamba/mamba_ssm/models/__pycache__/*
+dimsum/__pycache__/
+dimsum/datasets_prep/__pycache__/
+dimsum/pe/__pycache__/
+dimsum/transport/__pycache__/
+
 causal-conv1d/build/
 causal-conv1d/causal_conv1d.egg-info/
 causal-conv1d/causal_conv1d_cuda.cpython-310-x86_64-linux-gnu.so
