@@ -74,10 +74,14 @@ Details of the model architecture and experimental results can be found in our f
   - `cd causal_conv1d && pip install -e . && cd ..`
   - `cd mamba && pip install -e . && cd ..`
 
+- Add python path for DiMSUM: `export PYTHONPATH=$PYTHONPATH:$(pwd)`
+
 
 ## Data
+### Training
 For CelebA HQ (256) and LSUN, please follow [this repo](https://github.com/NVlabs/NVAE.git) for dataset preparation.
 
+### Evaluation
 For evaluation, please resize and extract "jpeg" images from dataset first.
 
 For LMDB data (like `celeba_256` and `lsun_church`), run this command:
@@ -122,14 +126,12 @@ python eval_toolbox/resize.py main input_data_dir real_samples/dataname
     <td><a href="https://drive.google.com/file/d/18ZBM3zFD8Va55UZe8S2yUXmXhVzWfFV3/view?usp=drive_link">imnet256_510ep.pt</a></td>
   </tr>
 
-  <tr>
+  <!-- <tr>
     <td> Celeba 512 </td>
     <td> 461M </td>
     <td> 6.09 </td>
     <td><a href="">celeb512_165ep.pth</a></td>
-  </tr>
-
-
+  </tr> -->
 
 </table>
 
@@ -152,7 +154,7 @@ bash scripts/eval.sh
 - DiMSUM architecture is put in [dimsum/models_dim.py](dimsum/models_dim.py).
 - Conditional Mamba can be found in [mamba/mamba_ssm/ops/selective_scan_interface.py](mamba/mamba_ssm/ops/selective_scan_interface.py) and [causal-conv1d/csrc/causal_conv1d.cpp](causal-conv1d/csrc/causal_conv1d.cpp).
 - Frequency transformations: [dimsum/wavelet_layer.py](dimsum/wavelet_layer.py) and [dimsum/dct_layer.py](dimsum/dct_layer.py).
-- Mamba Scanning strategies: [dimsum/scanning_orders.py](dimsum/scanning_orders.py).
+- Mamba Scanning strategies (e.g. sweep8, jpeg8): [dimsum/scanning_orders.py](dimsum/scanning_orders.py).
 
 ## Acknowledgments
 

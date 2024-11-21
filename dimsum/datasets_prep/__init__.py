@@ -2,7 +2,6 @@ import torch
 import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10, ImageNet
 from datasets_prep.lsun import LSUN
-from datasets_prep.stackmnist_data import StackedMNIST, _data_transforms_stacked_mnist
 from datasets_prep.lmdb_datasets import LMDBDataset
 from datasets_prep.latent_datasets import LatentDataset, LatentMemmapDataset
 from datasets_prep.data_transforms import center_crop_arr

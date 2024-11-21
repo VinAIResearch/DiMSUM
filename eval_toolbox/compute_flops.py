@@ -3,7 +3,7 @@ import torch
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 import sys
 from tqdm import tqdm
-sys.path.append("./vim")
+sys.path.append("./dimsum")
 
 # from torchtoolbox.tools import summary
 from thop.profile import profile

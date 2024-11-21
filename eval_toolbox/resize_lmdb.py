@@ -8,9 +8,9 @@ import torchvision
 import torchvision.transforms as transforms
 from tqdm import tqdm
 
-sys.path.append("./vim")
-from vim.datasets_prep.lmdb_datasets import LMDBDataset
-from vim.datasets_prep.lsun import LSUN
+sys.path.append("./dimsum")
+from dimsum.datasets_prep.lmdb_datasets import LMDBDataset
+from dimsum.datasets_prep.lsun import LSUN
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('Extract dataset')
