@@ -7,6 +7,7 @@ import torch
 #################################################################################
 # https://github.com/facebookresearch/mae/blob/main/util/pos_embed.py
 
+
 def get_2d_sincos_rotary_embed(embed_dim, grid_size, cls_token=False, extra_tokens=0):
     """
     grid_size: int of the grid height and width
@@ -29,13 +30,13 @@ def get_2d_sincos_rotary_embed_from_grid(embed_dim, grid):
     assert embed_dim % 2 == 0
 
     # use half of dimensions to encode grid_h
-    emb_sin_h, emb_cos_h = get_1d_sincos_rotary_embed_from_grid(embed_dim // 2, grid[0])  
-    emb_sin_w, emb_cos_w = get_1d_sincos_rotary_embed_from_grid(embed_dim // 2, grid[1])  
+    emb_sin_h, emb_cos_h = get_1d_sincos_rotary_embed_from_grid(embed_dim // 2, grid[0])
+    emb_sin_w, emb_cos_w = get_1d_sincos_rotary_embed_from_grid(embed_dim // 2, grid[1])
 
-    emb_sin = np.concatenate([emb_sin_h, emb_sin_w], axis=1) # (H*W, D/2) ([1,2,3])
-    emb_cos = np.concatenate([emb_cos_h, emb_cos_w], axis=1) # (H*W, D/2)
-    emb_sin = emb_sin.repeat(2, axis=1) # (H*W, D) ([1,1,2,2,3,3])
-    emb_cos = emb_cos.repeat(2, axis=1) # (H*W, D)
+    emb_sin = np.concatenate([emb_sin_h, emb_sin_w], axis=1)  # (H*W, D/2) ([1,2,3])
+    emb_cos = np.concatenate([emb_cos_h, emb_cos_w], axis=1)  # (H*W, D/2)
+    emb_sin = emb_sin.repeat(2, axis=1)  # (H*W, D) ([1,1,2,2,3,3])
+    emb_cos = emb_cos.repeat(2, axis=1)  # (H*W, D)
     return emb_sin, emb_cos
 
 
@@ -47,14 +48,14 @@ def get_1d_sincos_rotary_embed_from_grid(embed_dim, pos):
     """
     assert embed_dim % 2 == 0
     omega = np.arange(embed_dim // 2, dtype=np.float64)
-    omega /= embed_dim / 2.
-    omega = 1. / 10000**omega  # (D/2,)
+    omega /= embed_dim / 2.0
+    omega = 1.0 / 10000**omega  # (D/2,)
 
     pos = pos.reshape(-1)  # (M,)
-    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
+    out = np.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
 
-    emb_sin = np.sin(out) # (M, D/2)
-    emb_cos = np.cos(out) # (M, D/2)
+    emb_sin = np.sin(out)  # (M, D/2)
+    emb_cos = np.cos(out)  # (M, D/2)
 
     return emb_sin, emb_cos
 
@@ -65,13 +66,15 @@ def rotate_half(x):
     x_r[..., 1::2] = x[..., 0::2]
     return x_r
 
+
 def apply_rotary(x, emb_sin, emb_cos):
     x_r = rotate_half(x)
     return x * emb_cos + x_r * emb_sin
 
+
 if __name__ == "__main__":
-    emb_sin, emb_cos = get_2d_sincos_rotary_embed(128, 16) # grid size
+    emb_sin, emb_cos = get_2d_sincos_rotary_embed(128, 16)  # grid size
     print(emb_cos.shape, emb_sin.shape)
-    x = torch.rand((2, 256, 128)) # B x L x D
+    x = torch.rand((2, 256, 128))  # B x L x D
     x_r = apply_rotary(x, emb_sin, emb_cos)
     print(x_r.shape)

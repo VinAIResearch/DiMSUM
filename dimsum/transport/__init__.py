@@ -1,13 +1,14 @@
-from .transport import Transport, ModelType, WeightType, PathType, Sampler
+from .transport import ModelType, PathType, Transport, WeightType
+
 
 def create_transport(
-    path_type='Linear',
+    path_type="Linear",
     prediction="velocity",
     loss_weight=None,
     train_eps=None,
     sample_eps=None,
     path_args={},
-    t_sample_mode='uniform',
+    t_sample_mode="uniform",
 ):
     """function for creating Transport object
     **Note**: model prediction defaults to velocity
@@ -43,16 +44,16 @@ def create_transport(
 
     path_type = path_choice[path_type]
 
-    if (path_type in [PathType.VP]):
+    if path_type in [PathType.VP]:
         train_eps = 1e-5 if train_eps is None else train_eps
         sample_eps = 1e-3 if train_eps is None else sample_eps
-    elif (path_type in [PathType.GVP, PathType.LINEAR] and model_type != ModelType.VELOCITY):
+    elif path_type in [PathType.GVP, PathType.LINEAR] and model_type != ModelType.VELOCITY:
         train_eps = 1e-3 if train_eps is None else train_eps
         sample_eps = 1e-3 if train_eps is None else sample_eps
-    else: # velocity & [GVP, LINEAR] is stable everywhere
+    else:  # velocity & [GVP, LINEAR] is stable everywhere
         train_eps = 0
         sample_eps = 0
-    
+
     # create flow state
     state = Transport(
         model_type=model_type,
@@ -63,5 +64,5 @@ def create_transport(
         path_args=path_args,
         t_sample_mode=t_sample_mode,
     )
-    
+
     return state

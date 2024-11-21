@@ -10,27 +10,27 @@
 
 import ctypes
 import fnmatch
+import glob
+import hashlib
+import html
 import importlib
 import inspect
-import numpy as np
-import os
-import shutil
-import sys
-import types
 import io
+import os
 import pickle
 import re
-import requests
-import html
-import hashlib
-import glob
+import shutil
+import sys
 import tempfile
+import types
 import urllib
 import urllib.request
 import uuid
-
 from distutils.util import strtobool
 from typing import Any, List, Tuple, Union
+
+import numpy as np
+import requests
 
 
 # Util classes
@@ -79,7 +79,9 @@ class Logger(object):
         """Write text to stdout (and a file) and optionally flush."""
         if isinstance(text, bytes):
             text = text.decode()
-        if len(text) == 0: # workaround for a bug in VSCode debugger: sys.stdout.write(''); sys.stdout.flush() => crash
+        if (
+            len(text) == 0
+        ):  # workaround for a bug in VSCode debugger: sys.stdout.write(''); sys.stdout.flush() => crash
             return
 
         if self.file is not None:
@@ -117,20 +119,23 @@ class Logger(object):
 
 _dnnlib_cache_dir = None
 
+
 def set_cache_dir(path: str) -> None:
     global _dnnlib_cache_dir
     _dnnlib_cache_dir = path
 
+
 def make_cache_dir_path(*paths: str) -> str:
     if _dnnlib_cache_dir is not None:
         return os.path.join(_dnnlib_cache_dir, *paths)
-    if 'DNNLIB_CACHE_DIR' in os.environ:
-        return os.path.join(os.environ['DNNLIB_CACHE_DIR'], *paths)
-    if 'HOME' in os.environ:
-        return os.path.join(os.environ['HOME'], '.cache', 'dnnlib', *paths)
-    if 'USERPROFILE' in os.environ:
-        return os.path.join(os.environ['USERPROFILE'], '.cache', 'dnnlib', *paths)
-    return os.path.join(tempfile.gettempdir(), '.cache', 'dnnlib', *paths)
+    if "DNNLIB_CACHE_DIR" in os.environ:
+        return os.path.join(os.environ["DNNLIB_CACHE_DIR"], *paths)
+    if "HOME" in os.environ:
+        return os.path.join(os.environ["HOME"], ".cache", "dnnlib", *paths)
+    if "USERPROFILE" in os.environ:
+        return os.path.join(os.environ["USERPROFILE"], ".cache", "dnnlib", *paths)
+    return os.path.join(tempfile.gettempdir(), ".cache", "dnnlib", *paths)
+
 
 # Small util functions
 # ------------------------------------------------------------------------------------------
@@ -180,7 +185,7 @@ _str_to_ctype = {
     "int32": ctypes.c_int32,
     "int64": ctypes.c_int64,
     "float32": ctypes.c_float,
-    "float64": ctypes.c_double
+    "float64": ctypes.c_double,
 }
 
 
@@ -219,6 +224,7 @@ def is_pickleable(obj: Any) -> bool:
 # Functionality to import modules/objects by name, and call functions by name
 # ------------------------------------------------------------------------------------------
 
+
 def get_module_from_obj_name(obj_name: str) -> Tuple[types.ModuleType, str]:
     """Searches for the underlying module behind the name to some python object.
     Returns the module and the object name (original name with module part removed)."""
@@ -234,8 +240,8 @@ def get_module_from_obj_name(obj_name: str) -> Tuple[types.ModuleType, str]:
     # try each alternative in turn
     for module_name, local_obj_name in name_pairs:
         try:
-            module = importlib.import_module(module_name) # may raise ImportError
-            get_obj_from_module(module, local_obj_name) # may raise AttributeError
+            module = importlib.import_module(module_name)  # may raise ImportError
+            get_obj_from_module(module, local_obj_name)  # may raise AttributeError
             return module, local_obj_name
         except:
             pass
@@ -243,7 +249,7 @@ def get_module_from_obj_name(obj_name: str) -> Tuple[types.ModuleType, str]:
     # maybe some of the modules themselves contain errors?
     for module_name, _local_obj_name in name_pairs:
         try:
-            importlib.import_module(module_name) # may raise ImportError
+            importlib.import_module(module_name)  # may raise ImportError
         except ImportError:
             if not str(sys.exc_info()[1]).startswith("No module named '" + module_name + "'"):
                 raise
@@ -251,8 +257,8 @@ def get_module_from_obj_name(obj_name: str) -> Tuple[types.ModuleType, str]:
     # maybe the requested attribute is missing?
     for module_name, local_obj_name in name_pairs:
         try:
-            module = importlib.import_module(module_name) # may raise ImportError
-            get_obj_from_module(module, local_obj_name) # may raise AttributeError
+            module = importlib.import_module(module_name)  # may raise ImportError
+            get_obj_from_module(module, local_obj_name)  # may raise AttributeError
         except ImportError:
             pass
 
@@ -262,7 +268,7 @@ def get_module_from_obj_name(obj_name: str) -> Tuple[types.ModuleType, str]:
 
 def get_obj_from_module(module: types.ModuleType, obj_name: str) -> Any:
     """Traverses the object name and returns the last (rightmost) python object."""
-    if obj_name == '':
+    if obj_name == "":
         return module
     obj = module
     for part in obj_name.split("."):
@@ -304,7 +310,7 @@ def get_top_level_function_name(obj: Any) -> str:
     """Return the fully-qualified name of a top-level function."""
     assert is_top_level_function(obj)
     module = obj.__module__
-    if module == '__main__':
+    if module == "__main__":
         module = os.path.splitext(os.path.basename(sys.modules[module].__file__))[0]
     return module + "." + obj.__name__
 
@@ -312,7 +318,10 @@ def get_top_level_function_name(obj: Any) -> str:
 # File system helpers
 # ------------------------------------------------------------------------------------------
 
-def list_dir_recursively_with_ignore(dir_path: str, ignores: List[str] = None, add_base_to_relative: bool = False) -> List[Tuple[str, str]]:
+
+def list_dir_recursively_with_ignore(
+    dir_path: str, ignores: List[str] = None, add_base_to_relative: bool = False
+) -> List[Tuple[str, str]]:
     """List all files recursively in a given directory while ignoring given file and directory names.
     Returns list of tuples containing both absolute and relative paths."""
     assert os.path.isdir(dir_path)
@@ -361,11 +370,12 @@ def copy_files_and_create_dirs(files: List[Tuple[str, str]]) -> None:
 # URL helpers
 # ------------------------------------------------------------------------------------------
 
+
 def is_url(obj: Any, allow_file_urls: bool = False) -> bool:
     """Determine whether the given object is a valid URL string."""
     if not isinstance(obj, str) or not "://" in obj:
         return False
-    if allow_file_urls and obj.startswith('file://'):
+    if allow_file_urls and obj.startswith("file://"):
         return True
     try:
         res = requests.compat.urlparse(obj)
@@ -379,13 +389,20 @@ def is_url(obj: Any, allow_file_urls: bool = False) -> bool:
     return True
 
 
-def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: bool = True, return_filename: bool = False, cache: bool = True) -> Any:
+def open_url(
+    url: str,
+    cache_dir: str = None,
+    num_attempts: int = 10,
+    verbose: bool = True,
+    return_filename: bool = False,
+    cache: bool = True,
+) -> Any:
     """Download the given URL and return a binary-mode file object to access the data."""
     assert num_attempts >= 1
     assert not (return_filename and (not cache))
 
     # Doesn't look like an URL scheme so interpret it as a local filename.
-    if not re.match('^[a-z]+://', url):
+    if not re.match("^[a-z]+://", url):
         return url if return_filename else open(url, "rb")
 
     # Handle file URLs.  This code handles unusual file:// patterns that
@@ -402,9 +419,9 @@ def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: b
     # Some internet resources suggest using urllib.request.url2pathname() but
     # but that converts forward slashes to backslashes and this causes
     # its own set of problems.
-    if url.startswith('file://'):
+    if url.startswith("file://"):
         filename = urllib.parse.urlparse(url).path
-        if re.match(r'^/[a-zA-Z]:', filename):
+        if re.match(r"^/[a-zA-Z]:", filename):
             filename = filename[1:]
         return filename if return_filename else open(filename, "rb")
 
@@ -412,7 +429,7 @@ def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: b
 
     # Lookup from cache.
     if cache_dir is None:
-        cache_dir = make_cache_dir_path('downloads')
+        cache_dir = make_cache_dir_path("downloads")
 
     url_md5 = hashlib.md5(url.encode("utf-8")).hexdigest()
     if cache:
@@ -437,7 +454,9 @@ def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: b
                     if len(res.content) < 8192:
                         content_str = res.content.decode("utf-8")
                         if "download_warning" in res.headers.get("Set-Cookie", ""):
-                            links = [html.unescape(link) for link in content_str.split('"') if "export=download" in link]
+                            links = [
+                                html.unescape(link) for link in content_str.split('"') if "export=download" in link
+                            ]
                             if len(links) == 1:
                                 url = requests.compat.urljoin(url, links[0])
                                 raise IOError("Google Drive virus checker nag")
@@ -468,7 +487,7 @@ def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: b
         os.makedirs(cache_dir, exist_ok=True)
         with open(temp_file, "wb") as f:
             f.write(url_data)
-        os.replace(temp_file, cache_file) # atomic
+        os.replace(temp_file, cache_file)  # atomic
         if return_filename:
             return cache_file
 

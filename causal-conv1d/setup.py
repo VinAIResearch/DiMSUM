@@ -1,27 +1,20 @@
 # Copyright (c) 2023, Tri Dao.
-import sys
-import warnings
-import os
-import re
 import ast
-from pathlib import Path
-from packaging.version import parse, Version
+import os
 import platform
-
-from setuptools import setup, find_packages
+import re
 import subprocess
-
-import urllib.request
+import sys
 import urllib.error
-from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
+import urllib.request
+import warnings
+from pathlib import Path
 
 import torch
-from torch.utils.cpp_extension import (
-    BuildExtension,
-    CppExtension,
-    CUDAExtension,
-    CUDA_HOME,
-)
+from packaging.version import Version, parse
+from setuptools import find_packages, setup
+from torch.utils.cpp_extension import CUDA_HOME, BuildExtension, CppExtension, CUDAExtension
+from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
 
 
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -59,9 +52,7 @@ def get_platform():
 
 
 def get_cuda_bare_metal_version(cuda_dir):
-    raw_output = subprocess.check_output(
-        [cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True
-    )
+    raw_output = subprocess.check_output([cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True)
     output = raw_output.split()
     release_idx = output.index("release") + 1
     bare_metal_version = parse(output[release_idx].split(",")[0])
@@ -182,9 +173,7 @@ def get_wheel_url():
 
     # Determine wheel URL based on CUDA version, torch version, python version and OS
     wheel_filename = f"{PACKAGE_NAME}-{causal_conv1d_version}+cu{cuda_version}torch{torch_version}cxx11abi{cxx11_abi}-{python_version}-{python_version}-{platform_name}.whl"
-    wheel_url = BASE_WHEEL_URL.format(
-        tag_name=f"v{causal_conv1d_version}", wheel_name=wheel_filename
-    )
+    wheel_url = BASE_WHEEL_URL.format(tag_name=f"v{causal_conv1d_version}", wheel_name=wheel_filename)
     return wheel_url, wheel_filename
 
 
@@ -250,11 +239,13 @@ setup(
         "Operating System :: Unix",
     ],
     ext_modules=ext_modules,
-    cmdclass={"bdist_wheel": CachedWheelsCommand, "build_ext": BuildExtension}
-    if ext_modules
-    else {
-        "bdist_wheel": CachedWheelsCommand,
-    },
+    cmdclass=(
+        {"bdist_wheel": CachedWheelsCommand, "build_ext": BuildExtension}
+        if ext_modules
+        else {
+            "bdist_wheel": CachedWheelsCommand,
+        }
+    ),
     python_requires=">=3.7",
     install_requires=[
         "torch",

@@ -1,16 +1,10 @@
 # Copyright (c) 2023, Albert Gu, Tri Dao.
 import gc
-import time
-from collections import namedtuple
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Callable, Optional, Sequence, Union
 
 import torch
-import torch.nn.functional as F
-from einops import rearrange, repeat
 from torch import Tensor
-from torch.profiler import ProfilerActivity, profile, record_function
 from transformers.generation import GreedySearchDecoderOnlyOutput, SampleDecoderOnlyOutput
 
 
@@ -54,9 +48,7 @@ def modify_logits_for_top_p_filtering(logits, top_p):
     # Remove tokens with cumulative top_p above the threshold (token with 0 are kept)
     sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
     # scatter sorted tensors to original indexing
-    indices_to_remove = sorted_indices_to_remove.scatter(
-        1, sorted_indices, sorted_indices_to_remove
-    )
+    indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
     logits.masked_fill_(indices_to_remove, float("-inf"))
 
 
@@ -84,9 +76,7 @@ def sample(logits, top_k=1, top_p=0.0, temperature=1.0):
             # Clone so that when we modify for top_p we don't change the original logits
             logits_top = logits / temperature if temperature != 1.0 else logits.clone()
             modify_logits_for_top_p_filtering(logits_top, top_p)
-            return torch.multinomial(torch.softmax(logits_top, dim=-1), num_samples=1).squeeze(
-                dim=-1
-            )
+            return torch.multinomial(torch.softmax(logits_top, dim=-1), num_samples=1).squeeze(dim=-1)
 
 
 @torch.inference_mode()
@@ -156,9 +146,7 @@ def decode(
                 num_last_tokens=1,
             ).logits.squeeze(dim=1)
         else:
-            logits = model._decoding_cache.run(
-                input_ids, position_ids, inference_params.seqlen_offset
-            ).squeeze(dim=1)
+            logits = model._decoding_cache.run(input_ids, position_ids, inference_params.seqlen_offset).squeeze(dim=1)
         return logits[..., :vocab_size] if vocab_size is not None else logits
 
     def sample_tokens(logits, inference_params):
@@ -215,9 +203,7 @@ class GenerationMixin:
         output_scores=False,
         **kwargs,
     ):
-        output = decode(
-            input_ids, self, max_length, top_k=top_k, top_p=top_p, temperature=temperature, **kwargs
-        )
+        output = decode(input_ids, self, max_length, top_k=top_k, top_p=top_p, temperature=temperature, **kwargs)
         if not output_scores:
             output.scores = None
         return output if return_dict_in_generate else output.sequences
@@ -327,9 +313,7 @@ def update_graph_cache(
     return cache
 
 
-def capture_graph(
-    model, inference_params, batch_size, max_seqlen, decoding_seqlen=1, mempool=None, n_warmups=2
-):
+def capture_graph(model, inference_params, batch_size, max_seqlen, decoding_seqlen=1, mempool=None, n_warmups=2):
     device = next(iter(model.parameters())).device
     input_ids = torch.full((batch_size, decoding_seqlen), 0, dtype=torch.long, device=device)
     position_ids = torch.full((batch_size, decoding_seqlen), 0, dtype=torch.long, device=device)

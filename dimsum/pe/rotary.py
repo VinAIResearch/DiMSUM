@@ -46,12 +46,9 @@ class Rotary2D:
             self.pos_cached = torch.empty(H * W, self.dim, dtype=x.dtype, device=x.device)
             for i in range(H):
                 for j in range(W):
-                    emb = torch.cat([
-                        position_x[i, 0::2],
-                        position_y[j, 0::2],
-                        position_x[i, 1::2],
-                        position_y[j, 1::2]
-                    ], 0).flatten(-2)
+                    emb = torch.cat(
+                        [position_x[i, 0::2], position_y[j, 0::2], position_x[i, 1::2], position_y[j, 1::2]], 0
+                    ).flatten(-2)
                     self.pos_cached[i * W + j] = emb.to(x.dtype).to(x.device)
         return self.pos_cached
 
@@ -80,11 +77,10 @@ class Rotary(torch.nn.Module):
 
 # rotary pos emb helpers:
 
+
 def rotate_half(x):
     x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
-    return torch.cat(
-        (-x2, x1), dim=x1.ndim - 1
-    )  # dim=-1 triggers a bug in torch < 1.8.0
+    return torch.cat((-x2, x1), dim=x1.ndim - 1)  # dim=-1 triggers a bug in torch < 1.8.0
 
 
 @torch.jit.script

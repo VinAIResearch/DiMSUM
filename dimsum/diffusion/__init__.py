@@ -9,7 +9,7 @@ from .respace import SpacedDiffusion, space_timesteps
 
 def create_diffusion(
     timestep_respacing,
-    noise_schedule="linear", 
+    noise_schedule="linear",
     use_kl=False,
     sigma_small=False,
     predict_xstart=False,
@@ -34,15 +34,9 @@ def create_diffusion(
     return SpacedDiffusion(
         use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
         betas=betas,
-        model_mean_type=(
-            gd.ModelMeanType.EPSILON if not predict_xstart else gd.ModelMeanType.START_X
-        ),
+        model_mean_type=(gd.ModelMeanType.EPSILON if not predict_xstart else gd.ModelMeanType.START_X),
         model_var_type=(
-            (
-                gd.ModelVarType.FIXED_LARGE
-                if not sigma_small
-                else gd.ModelVarType.FIXED_SMALL
-            )
+            (gd.ModelVarType.FIXED_LARGE if not sigma_small else gd.ModelVarType.FIXED_SMALL)
             if not learn_sigma
             else gd.ModelVarType.LEARNED_RANGE
         ),

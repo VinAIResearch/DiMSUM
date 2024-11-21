@@ -1,8 +1,6 @@
-import numpy as np
-import lmdb
 import os
-import io
-from glob import glob
+
+import numpy as np
 import torch
 import torch.utils.data as data
 
@@ -32,10 +30,10 @@ import torch.utils.data as data
 
 class LatentMemmapDataset(data.Dataset):
     def __init__(self, dataset, features_dir, labels_dir=None):
-        self.features = np.memmap(features_dir, dtype=np.float32, mode='r', shape=(1281167*2,4,32,32))
+        self.features = np.memmap(features_dir, dtype=np.float32, mode="r", shape=(1281167 * 2, 4, 32, 32))
         self.labels = None
         if labels_dir:
-            self.labels = np.memmap(labels_dir, dtype=int, mode='r', shape=(1281167*2,))
+            self.labels = np.memmap(labels_dir, dtype=int, mode="r", shape=(1281167 * 2,))
         self.dataset = dataset
 
     def __len__(self):

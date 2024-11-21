@@ -47,15 +47,13 @@ limitations under the License.
 import os
 import pathlib
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
-from multiprocessing import cpu_count
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torchvision.transforms as TF
 from PIL import Image
-from scipy import linalg
 from torch.nn.functional import adaptive_avg_pool2d
+
 
 try:
     from tqdm import tqdm
@@ -64,28 +62,25 @@ except ImportError:
     def tqdm(x):
         return x
 
+
 try:
     from inception import InceptionV3
 except ImportError:
     from .inception import InceptionV3
 
 parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-parser.add_argument('--batch_size', type=int, default=50,
-                    help='Batch size to use')
-parser.add_argument('--device', type=str, default=None,
-                    help='Device to use. Like cuda, cuda:0 or cpu')
-parser.add_argument('--dims', type=int, default=2048,
-                    choices=list(InceptionV3.BLOCK_INDEX_BY_DIM),
-                    help=('Dimensionality of Inception features to use. '
-                          'By default, uses pool3 features'))
-parser.add_argument('--dataset', type=str,
-                    help=('Paths to the generated images or '
-                          'to .npz statistic files'))
+parser.add_argument("--batch_size", type=int, default=50, help="Batch size to use")
+parser.add_argument("--device", type=str, default=None, help="Device to use. Like cuda, cuda:0 or cpu")
+parser.add_argument(
+    "--dims",
+    type=int,
+    default=2048,
+    choices=list(InceptionV3.BLOCK_INDEX_BY_DIM),
+    help=("Dimensionality of Inception features to use. " "By default, uses pool3 features"),
+)
+parser.add_argument("--dataset", type=str, help=("Paths to the generated images or " "to .npz statistic files"))
 
-IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',
-                    'tif', 'tiff', 'webp'}
-
-
+IMAGE_EXTENSIONS = {"bmp", "jpg", "jpeg", "pgm", "png", "ppm", "tif", "tiff", "webp"}
 
 
 class ImagePathDataset(torch.utils.data.Dataset):
@@ -98,13 +93,13 @@ class ImagePathDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         path = self.files[i]
-        img = Image.open(path).convert('RGB')
+        img = Image.open(path).convert("RGB")
         if self.transforms is not None:
             img = self.transforms(img)
         return img
 
 
-def get_activations(files, model, batch_size=50, dims=2048, device='cpu', resize=0):
+def get_activations(files, model, batch_size=50, dims=2048, device="cpu", resize=0):
     """Calculates the activations of the pool_3 layer for all images.
 
     Params:
@@ -126,21 +121,17 @@ def get_activations(files, model, batch_size=50, dims=2048, device='cpu', resize
     model.eval()
 
     if batch_size > len(files):
-        print(('Warning: batch size is bigger than the data size. '
-               'Setting batch size to data size'))
+        print(("Warning: batch size is bigger than the data size. " "Setting batch size to data size"))
         batch_size = len(files)
 
     if resize > 0:
-        print('Resized to ({}, {})'.format(resize, resize))
-        dataset = ImagePathDataset(files, transforms=TF.Compose([TF.Resize(size=(resize, resize)), 
-                                                                 TF.ToTensor()]))
+        print("Resized to ({}, {})".format(resize, resize))
+        dataset = ImagePathDataset(files, transforms=TF.Compose([TF.Resize(size=(resize, resize)), TF.ToTensor()]))
     else:
         dataset = ImagePathDataset(files, transforms=TF.ToTensor())
-    dataloader = torch.utils.data.DataLoader(dataset,
-                                             batch_size=batch_size,
-                                             shuffle=False,
-                                             drop_last=False,
-                                             num_workers=32)
+    dataloader = torch.utils.data.DataLoader(
+        dataset, batch_size=batch_size, shuffle=False, drop_last=False, num_workers=32
+    )
 
     pred_arr = np.empty((len(files), dims))
 
@@ -159,15 +150,14 @@ def get_activations(files, model, batch_size=50, dims=2048, device='cpu', resize
 
         pred = pred.squeeze(3).squeeze(2).cpu().numpy()
 
-        pred_arr[start_idx:start_idx + pred.shape[0]] = pred
+        pred_arr[start_idx : start_idx + pred.shape[0]] = pred
 
         start_idx = start_idx + pred.shape[0]
 
     return pred_arr
 
 
-def calculate_activation_statistics(files, model, batch_size=50, dims=2048,
-                                    device='cpu', resize=0):
+def calculate_activation_statistics(files, model, batch_size=50, dims=2048, device="cpu", resize=0):
     """Calculation of the statistics used by the FID.
     Params:
     -- files       : List of image files paths
@@ -192,18 +182,16 @@ def calculate_activation_statistics(files, model, batch_size=50, dims=2048,
 
 
 def compute_statistics_of_path(path, model, batch_size, dims, device, resize=0):
-    if path.endswith('.npz') or path.endswith('.npy'):
+    if path.endswith(".npz") or path.endswith(".npy"):
         f = np.load(path, allow_pickle=True)
         try:
-            m, s = f['mu'][:], f['sigma'][:]
+            m, s = f["mu"][:], f["sigma"][:]
         except:
-            m, s = f.item()['mu'][:], f.item()['sigma'][:]
+            m, s = f.item()["mu"][:], f.item()["sigma"][:]
     else:
         path = pathlib.Path(path)
-        files = sorted([file for ext in IMAGE_EXTENSIONS
-                       for file in path.rglob('*.{}'.format(ext))])
-        m, s = calculate_activation_statistics(files, model, batch_size,
-                                               dims, device, resize)
+        files = sorted([file for ext in IMAGE_EXTENSIONS for file in path.rglob("*.{}".format(ext))])
+        m, s = calculate_activation_statistics(files, model, batch_size, dims, device, resize)
     return m, s
 
 
@@ -211,28 +199,26 @@ def main():
     args = parser.parse_args()
 
     if args.device is None:
-        device = torch.device('cuda' if (torch.cuda.is_available()) else 'cpu')
+        device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     else:
         device = torch.device(args.device)
-    
-    path = f'./images_for_fid/{args.dataset}'
+
+    path = f"./images_for_fid/{args.dataset}"
 
     """Calculates the FID of two paths"""
     if not os.path.exists(path):
-            raise RuntimeError('Invalid path: %s' % path)
+        raise RuntimeError("Invalid path: %s" % path)
 
     block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[args.dims]
 
     model = InceptionV3([block_idx]).to(device)
-    
-    m, s = compute_statistics_of_path(path, model, args.batch_size,
-                                        args.dims, device)
-    stats = {'mu': m, 'sigma': s}
+
+    m, s = compute_statistics_of_path(path, model, args.batch_size, args.dims, device)
+    stats = {"mu": m, "sigma": s}
     # print(stats)
     # print(m, s)
-    np.save(f'./pytorch_fid/{args.dataset}_train_stat.npy', stats)
+    np.save(f"./pytorch_fid/{args.dataset}_train_stat.npy", stats)
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

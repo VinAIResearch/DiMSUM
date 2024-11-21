@@ -2,16 +2,10 @@
 
 import argparse
 import time
-import json
 
 import torch
-import torch.nn.functional as F
-
-from einops import rearrange
-
-from transformers import AutoTokenizer, AutoModelForCausalLM
-
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 parser = argparse.ArgumentParser(description="Generation benchmarking")

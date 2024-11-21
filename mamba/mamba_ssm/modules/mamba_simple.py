@@ -6,9 +6,9 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange, repeat
 from torch import Tensor
 
-from einops import rearrange, repeat
 
 try:
     from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
@@ -16,8 +16,14 @@ except ImportError:
     causal_conv1d_fn, causal_conv1d_update = None
 
 try:
-    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn, bimamba_inner_fn, mamba_inner_fn_no_out_proj
-    from mamba_ssm.ops.selective_scan_interface import mamba_inner_fn_cond, mamba_inner_fn_no_out_proj_cond
+    from mamba_ssm.ops.selective_scan_interface import (
+        bimamba_inner_fn,
+        mamba_inner_fn,
+        mamba_inner_fn_cond,
+        mamba_inner_fn_no_out_proj,
+        mamba_inner_fn_no_out_proj_cond,
+        selective_scan_fn,
+    )
 except ImportError:
     selective_scan_fn, mamba_inner_fn, bimamba_inner_fn, mamba_inner_fn_no_out_proj = None, None, None, None, None
     mamba_inner_fn_cond, mamba_inner_fn_no_out_proj_cond = None, None
@@ -82,9 +88,7 @@ class Mamba(nn.Module):
         self.activation = "silu"
         self.act = nn.SiLU()
 
-        self.x_proj = nn.Linear(
-            self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs
-        )
+        self.x_proj = nn.Linear(self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs)
         self.dt_proj = nn.Linear(self.dt_rank, self.d_inner, bias=True, **factory_kwargs)
 
         # Initialize special dt projection to preserve variance at initialization
@@ -98,8 +102,7 @@ class Mamba(nn.Module):
 
         # Initialize dt bias so that F.softplus(dt_bias) is between dt_min and dt_max
         dt = torch.exp(
-            torch.rand(self.d_inner, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min))
-            + math.log(dt_min)
+            torch.rand(self.d_inner, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min)) + math.log(dt_min)
         ).clamp(min=dt_init_floor)
         # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
         inv_dt = dt + torch.log(-torch.expm1(-dt))
@@ -123,7 +126,7 @@ class Mamba(nn.Module):
         self.D._no_weight_decay = True
 
         # bidirectional
-        if self.scan_type == 'v2':
+        if self.scan_type == "v2":
             A_b = repeat(
                 torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
                 "n -> d n",
@@ -131,7 +134,7 @@ class Mamba(nn.Module):
             ).contiguous()
             A_b_log = torch.log(A_b)  # Keep A_b_log in fp32
             self.A_b_log = nn.Parameter(A_b_log)
-            self.A_b_log._no_weight_decay = True 
+            self.A_b_log._no_weight_decay = True
 
             self.conv1d_b = nn.Conv1d(
                 in_channels=self.d_inner,
@@ -143,20 +146,18 @@ class Mamba(nn.Module):
                 **factory_kwargs,
             )
 
-            self.x_proj_b = nn.Linear(
-                self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs
-            )
+            self.x_proj_b = nn.Linear(self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs)
             self.dt_proj_b = nn.Linear(self.dt_rank, self.d_inner, bias=True, **factory_kwargs)
 
             self.D_b = nn.Parameter(torch.ones(self.d_inner, device=device))  # Keep in fp32
             self.D_b._no_weight_decay = True
         else:
-            self.A_b_log, self.conv1d_b, self.x_proj_b, self.dt_proj_b, self.D_b, self.out_proj = [None]*6
+            self.A_b_log, self.conv1d_b, self.x_proj_b, self.dt_proj_b, self.D_b, self.out_proj = [None] * 6
 
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
 
-        self.register_buffer('zigzag_paths', kwargs.get("zigzag_paths", None))
-        self.register_buffer('zigzag_paths_reverse', kwargs.get("zigzag_paths_reverse", None))
+        self.register_buffer("zigzag_paths", kwargs.get("zigzag_paths", None))
+        self.register_buffer("zigzag_paths_reverse", kwargs.get("zigzag_paths_reverse", None))
 
     def forward(self, hidden_states, cond_emb=None, inference_params=None):
         """
@@ -214,13 +215,19 @@ class Mamba(nn.Module):
                     delta_softplus=True,
                 )
                 # F.linear(rearrange(out_z, "b d l -> b l d"), out_proj_weight, out_proj_bias)
-                out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias)
+                out = F.linear(
+                    rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias
+                )
             else:
-                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                if (
+                    self.scan_type.startswith("zigma")
+                    or self.scan_type.startswith("sweep")
+                    or self.scan_type.startswith("jpeg")
+                ):
                     #### rearrange
                     _perm = self.zigzag_paths[self.layer_idx]
                     # xz = xz[:, :, _perm].contiguous()  # [B,D,L]
-                    xz = torch.gather(xz, 2, _perm[None, None, :].expand_as(xz)) # [B,D,L] 
+                    xz = torch.gather(xz, 2, _perm[None, None, :].expand_as(xz))  # [B,D,L]
                 out = mamba_inner_fn(
                     xz,
                     self.conv1d.weight,
@@ -236,7 +243,11 @@ class Mamba(nn.Module):
                     delta_bias=self.dt_proj.bias.float(),
                     delta_softplus=True,
                 )
-                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                if (
+                    self.scan_type.startswith("zigma")
+                    or self.scan_type.startswith("sweep")
+                    or self.scan_type.startswith("jpeg")
+                ):
                     _perm_rev = self.zigzag_paths_reverse[self.layer_idx]
                     # out = out[:, _perm_rev, :].contiguous()  # out is [B,L,D]
                     out = torch.gather(out, 1, _perm_rev[None, :, None].expand_as(out))  # out is [B,L,D]
@@ -335,20 +346,15 @@ class Mamba(nn.Module):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         device = self.out_proj.weight.device
         conv_dtype = self.conv1d.weight.dtype if dtype is None else dtype
-        conv_state = torch.zeros(
-            batch_size, self.d_model * self.expand, self.d_conv, device=device, dtype=conv_dtype
-        )
+        conv_state = torch.zeros(batch_size, self.d_model * self.expand, self.d_conv, device=device, dtype=conv_dtype)
         ssm_dtype = self.dt_proj.weight.dtype if dtype is None else dtype
         # ssm_dtype = torch.float32
-        ssm_state = torch.zeros(
-            batch_size, self.d_model * self.expand, self.d_state, device=device, dtype=ssm_dtype
-        )
+        ssm_state = torch.zeros(batch_size, self.d_model * self.expand, self.d_state, device=device, dtype=ssm_dtype)
         return conv_state, ssm_state
 
     def _get_states_from_cache(self, inference_params, batch_size, initialize_states=False):
         assert self.layer_idx is not None
         if self.layer_idx not in inference_params.key_value_memory_dict:
-            batch_shape = (batch_size,)
             conv_state = torch.zeros(
                 batch_size,
                 self.d_model * self.expand,
@@ -375,9 +381,7 @@ class Mamba(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(
-        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False
-    ):
+    def __init__(self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False):
         """
         Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
 
@@ -401,9 +405,7 @@ class Block(nn.Module):
                 self.norm, (nn.LayerNorm, RMSNorm)
             ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
 
-    def forward(
-        self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None
-    ):
+    def forward(self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None):
         r"""Pass the input through the encoder layer.
 
         Args:
@@ -484,9 +486,7 @@ class CondMamba(nn.Module):
         self.activation = "silu"
         self.act = nn.SiLU()
 
-        self.x_proj = nn.Linear(
-            self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs
-        )
+        self.x_proj = nn.Linear(self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs)
         self.dt_proj = nn.Linear(self.dt_rank, self.d_inner, bias=True, **factory_kwargs)
         if self.d_cond is not None:
             self.cond_proj = nn.Linear(self.d_cond, self.d_inner, bias=True, **factory_kwargs)
@@ -502,8 +502,7 @@ class CondMamba(nn.Module):
 
         # Initialize dt bias so that F.softplus(dt_bias) is between dt_min and dt_max
         dt = torch.exp(
-            torch.rand(self.d_inner, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min))
-            + math.log(dt_min)
+            torch.rand(self.d_inner, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min)) + math.log(dt_min)
         ).clamp(min=dt_init_floor)
         # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
         inv_dt = dt + torch.log(-torch.expm1(-dt))
@@ -527,7 +526,7 @@ class CondMamba(nn.Module):
         self.D._no_weight_decay = True
 
         # bidirectional
-        if self.scan_type == 'v2':
+        if self.scan_type == "v2":
             A_b = repeat(
                 torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
                 "n -> d n",
@@ -535,7 +534,7 @@ class CondMamba(nn.Module):
             ).contiguous()
             A_b_log = torch.log(A_b)  # Keep A_b_log in fp32
             self.A_b_log = nn.Parameter(A_b_log)
-            self.A_b_log._no_weight_decay = True 
+            self.A_b_log._no_weight_decay = True
 
             self.conv1d_b = nn.Conv1d(
                 in_channels=self.d_inner,
@@ -547,20 +546,18 @@ class CondMamba(nn.Module):
                 **factory_kwargs,
             )
 
-            self.x_proj_b = nn.Linear(
-                self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs
-            )
+            self.x_proj_b = nn.Linear(self.d_inner, self.dt_rank + self.d_state * 2, bias=False, **factory_kwargs)
             self.dt_proj_b = nn.Linear(self.dt_rank, self.d_inner, bias=True, **factory_kwargs)
 
             self.D_b = nn.Parameter(torch.ones(self.d_inner, device=device))  # Keep in fp32
             self.D_b._no_weight_decay = True
         else:
-            self.A_b_log, self.conv1d_b, self.x_proj_b, self.dt_proj_b, self.D_b, self.out_proj = [None]*6
+            self.A_b_log, self.conv1d_b, self.x_proj_b, self.dt_proj_b, self.D_b, self.out_proj = [None] * 6
 
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
 
-        self.register_buffer('zigzag_paths', kwargs.get("zigzag_paths", None))
-        self.register_buffer('zigzag_paths_reverse', kwargs.get("zigzag_paths_reverse", None))
+        self.register_buffer("zigzag_paths", kwargs.get("zigzag_paths", None))
+        self.register_buffer("zigzag_paths_reverse", kwargs.get("zigzag_paths_reverse", None))
 
     def forward(self, hidden_states, cond_emb=None, inference_params=None):
         """
@@ -587,9 +584,9 @@ class CondMamba(nn.Module):
             xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
 
         A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
-        d_inner, d_state = A.size(0), A.size(1)
+        # d_inner, d_state = A.size(0), A.size(1)
         if cond_emb is not None:
-            cond_emb = self.cond_proj(cond_emb)[..., None].expand(-1, -1, seqlen).contiguous() # (batch, d_inner, 1)
+            cond_emb = self.cond_proj(cond_emb)[..., None].expand(-1, -1, seqlen).contiguous()  # (batch, d_inner, 1)
 
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
         if self.use_fast_path and inference_params is None:  # Doesn't support outputting the states
@@ -623,14 +620,18 @@ class CondMamba(nn.Module):
                     delta_softplus=True,
                     init_states=cond_emb,
                 )
-                # F.linear(rearrange(out_z, "b d l -> b l d"), out_proj_weight, out_proj_bias)
-                out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias)
+                out = F.linear(
+                    rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias
+                )
             else:
-                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                if (
+                    self.scan_type.startswith("zigma")
+                    or self.scan_type.startswith("sweep")
+                    or self.scan_type.startswith("jpeg")
+                ):
                     #### rearrange
                     _perm = self.zigzag_paths[self.layer_idx]
-                    # xz = xz[:, :, _perm].contiguous()  # [B,D,L]
-                    xz = torch.gather(xz, 2, _perm[None, None, :].expand_as(xz)) # [B,D,L] 
+                    xz = torch.gather(xz, 2, _perm[None, None, :].expand_as(xz))  # [B,D,L]
                 out = mamba_inner_fn_cond(
                     xz,
                     self.conv1d.weight,
@@ -647,9 +648,12 @@ class CondMamba(nn.Module):
                     delta_softplus=True,
                     init_states=cond_emb,
                 )
-                if self.scan_type.startswith("zigma") or self.scan_type.startswith("sweep") or self.scan_type.startswith("jpeg"):
+                if (
+                    self.scan_type.startswith("zigma")
+                    or self.scan_type.startswith("sweep")
+                    or self.scan_type.startswith("jpeg")
+                ):
                     _perm_rev = self.zigzag_paths_reverse[self.layer_idx]
-                    # out = out[:, _perm_rev, :].contiguous()  # out is [B,L,D]
                     out = torch.gather(out, 1, _perm_rev[None, :, None].expand_as(out))  # out is [B,L,D]
         else:
             x, z = xz.chunk(2, dim=1)
@@ -746,20 +750,15 @@ class CondMamba(nn.Module):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         device = self.out_proj.weight.device
         conv_dtype = self.conv1d.weight.dtype if dtype is None else dtype
-        conv_state = torch.zeros(
-            batch_size, self.d_model * self.expand, self.d_conv, device=device, dtype=conv_dtype
-        )
+        conv_state = torch.zeros(batch_size, self.d_model * self.expand, self.d_conv, device=device, dtype=conv_dtype)
         ssm_dtype = self.dt_proj.weight.dtype if dtype is None else dtype
         # ssm_dtype = torch.float32
-        ssm_state = torch.zeros(
-            batch_size, self.d_model * self.expand, self.d_state, device=device, dtype=ssm_dtype
-        )
+        ssm_state = torch.zeros(batch_size, self.d_model * self.expand, self.d_state, device=device, dtype=ssm_dtype)
         return conv_state, ssm_state
 
     def _get_states_from_cache(self, inference_params, batch_size, initialize_states=False):
         assert self.layer_idx is not None
         if self.layer_idx not in inference_params.key_value_memory_dict:
-            batch_shape = (batch_size,)
             conv_state = torch.zeros(
                 batch_size,
                 self.d_model * self.expand,
@@ -782,4 +781,4 @@ class CondMamba(nn.Module):
             if initialize_states:
                 conv_state.zero_()
                 ssm_state.zero_()
-        return conv_state, ssm_st
+        return conv_state, ssm_state

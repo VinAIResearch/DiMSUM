@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
 
 def init_dct_kernel(in_ch, ksize=8, rsize=2):
     """[init a conv2d kernel for dct]

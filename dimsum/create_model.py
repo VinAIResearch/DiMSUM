@@ -1,6 +1,7 @@
 from models_dim import DiM_models
 from models_dit import DiT_models
 
+
 def create_model(config):
     if "DiM" in config.model:
         return DiM_models[config.model](
@@ -14,7 +15,7 @@ def create_model(config):
             is_moe=config.is_moe,
             learn_sigma=config.learn_sigma,
             scan_type=config.bimamba_type,
-            pe_type=config.pe_type, 
+            pe_type=config.pe_type,
             block_type=config.block_type,
             cond_mamba=config.cond_mamba,
             scanning_continuity=config.scanning_continuity,
@@ -27,7 +28,7 @@ def create_model(config):
             use_attn_every_k_layers=config.use_attn_every_k_layers,
             use_gated_mlp=not config.not_use_gated_mlp,
         )
-    elif "DiT" in config.model: 
+    elif "DiT" in config.model:
         return DiT_models[config.model](
             img_resolution=config.image_size // 8,
             in_channels=config.num_in_channels,
@@ -35,4 +36,3 @@ def create_model(config):
             num_classes=config.num_classes,
             learn_sigma=config.learn_sigma,
         )
-

@@ -2,35 +2,33 @@ export MASTER_PORT=10182
 
 echo MASTER_PORT=${MASTER_PORT}
 
-module purge
-module load python/miniconda3/miniconda3
 eval "$(conda shell.bash hook)"
 conda activate dimsum
 
 ### CelebA 256
-# torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=2 dimsum/train.py \
-#         --exp dimsum_celeb256 \
-#         --model DiM-L/2 \
-#         --datadir ../data/celeba_256/celeba-lmdb/ \
-#         --dataset celeba_256 \
-#         --num-classes 1 \
-#         --global-batch-size 64 \
-#         --epochs 250 \
-#         --path-type GVP \
-#         --diffusion-form none \
-#         --lr 1e-4 \
-#         --block-type combined \
-#         --bimamba-type none \
-#         --eval-every 9999 \
-#         --eval-nsamples 2_000 \
-#         --eval-bs 4 \
-#         --eval-refdir real_samples/celeba_256/ \
-#         --rms-norm \
-#         --fused-add-norm \
-#         --drop-path 0.1 \
-#         --learnable-pe \
-#         --cond-mamba \
-#         --use-attn-every-k-layers 4 \
+torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=1 dimsum/train.py \
+        --exp dimsum_celeb256 \
+        --model DiM-L/2 \
+        --datadir /share/kuleshov/datasets/celeba-lmdb/ \
+        --dataset celeba_256 \
+        --num-classes 1 \
+        --global-batch-size 16 \
+        --epochs 250 \
+        --path-type GVP \
+        --diffusion-form none \
+        --lr 1e-4 \
+        --block-type combined \
+        --bimamba-type none \
+        --eval-every 9999 \
+        --eval-nsamples 2_000 \
+        --eval-bs 4 \
+        --eval-refdir real_samples/celeba_256/ \
+        --rms-norm \
+        --fused-add-norm \
+        --drop-path 0.1 \
+        --learnable-pe \
+        --cond-mamba \
+        --use-attn-every-k-layers 4 \
 
 ### CelebA 512
 # torchrun --nnodes=1 --rdzv_endpoint 0.0.0.0:$MASTER_PORT --nproc_per_node=4 dimsum/train.py \

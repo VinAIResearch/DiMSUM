@@ -2,13 +2,15 @@
 
 import math
 
-import torch
 import pytest
-
+import torch
+from causal_conv1d.causal_conv1d_interface import (
+    causal_conv1d_fn,
+    causal_conv1d_ref,
+    causal_conv1d_update,
+    causal_conv1d_update_ref,
+)
 from einops import rearrange
-
-from causal_conv1d.causal_conv1d_interface import causal_conv1d_fn, causal_conv1d_ref
-from causal_conv1d.causal_conv1d_interface import causal_conv1d_update, causal_conv1d_update_ref
 
 
 @pytest.mark.parametrize("channel_last", [False, True])
@@ -21,9 +23,7 @@ from causal_conv1d.causal_conv1d_interface import causal_conv1d_update, causal_c
 # @pytest.mark.parametrize('has_bias', [True])
 @pytest.mark.parametrize("width", [2, 3, 4])
 # @pytest.mark.parametrize('width', [2])
-@pytest.mark.parametrize(
-    "seqlen", [8, 16, 32, 64, 128, 151, 256, 372, 512, 784, 1024, 1134, 2048, 4096]
-)
+@pytest.mark.parametrize("seqlen", [8, 16, 32, 64, 128, 151, 256, 372, 512, 784, 1024, 1134, 2048, 4096])
 # @pytest.mark.parametrize('seqlen', [8, 16, 32, 64, 128, 256, 512, 784, 1024, 2048, 4096])
 # @pytest.mark.parametrize('seqlen', [128])
 def test_causal_conv1d(seqlen, width, has_bias, silu_activation, itype, channel_last):
@@ -39,10 +39,13 @@ def test_causal_conv1d(seqlen, width, has_bias, silu_activation, itype, channel_
     dim = 4096 + 32  # Try dim not divisible by 64
     # dim = 64
     if not channel_last:
-        x = torch.randn(batch_size, 4096 + dim + 64, seqlen, device=device, dtype=itype)[:, 4096:4096 + dim, :].requires_grad_()
+        x = torch.randn(batch_size, 4096 + dim + 64, seqlen, device=device, dtype=itype)[
+            :, 4096 : 4096 + dim, :
+        ].requires_grad_()
     else:
         x = rearrange(
-            torch.randn(batch_size, seqlen, 4096 + dim + 64, device=device, dtype=itype)[:, :, 4096:4096 + dim], "b s d -> b d s"
+            torch.randn(batch_size, seqlen, 4096 + dim + 64, device=device, dtype=itype)[:, :, 4096 : 4096 + dim],
+            "b s d -> b d s",
         ).requires_grad_()
     weight = torch.randn(dim, width, device=device, dtype=torch.float32, requires_grad=True)
     if has_bias:
@@ -115,18 +118,19 @@ def test_causal_conv1d_update(dim, width, has_bias, silu_activation, itype):
 
 
 # @pytest.mark.parametrize("channel_last", [False, True])
-@pytest.mark.parametrize('channel_last', [True])
+@pytest.mark.parametrize("channel_last", [True])
 # @pytest.mark.parametrize("itype", [torch.float32, torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('itype', [torch.bfloat16])
+@pytest.mark.parametrize("itype", [torch.bfloat16])
 # @pytest.mark.parametrize("silu_activation", [False, True])
-@pytest.mark.parametrize('silu_activation', [True])
+@pytest.mark.parametrize("silu_activation", [True])
 # @pytest.mark.parametrize("has_bias", [False, True])
-@pytest.mark.parametrize('has_bias', [True])
+@pytest.mark.parametrize("has_bias", [True])
 # @pytest.mark.parametrize("width", [2, 3, 4])
-@pytest.mark.parametrize('width', [4])
+@pytest.mark.parametrize("width", [4])
 @pytest.mark.parametrize(
     # "seqlen", [8, 16, 32, 64, 128, 151, 256, 372, 512, 784, 1024, 1134, 2048, 4096]
-    "seqlen", [2048]
+    "seqlen",
+    [2048],
 )
 # @pytest.mark.parametrize('seqlen', [8, 16, 32, 64, 128, 256, 512, 784, 1024, 2048, 4096])
 # @pytest.mark.parametrize('seqlen', [128])
@@ -139,10 +143,13 @@ def test_causal_conv1d_race_condition(seqlen, width, has_bias, silu_activation, 
     dim = 4096 + 32  # Try dim not divisible by 64
     # dim = 64
     if not channel_last:
-        x = torch.randn(batch_size, 4096 + dim + 64, seqlen, device=device, dtype=itype)[:, 4096:4096 + dim, :].requires_grad_()
+        x = torch.randn(batch_size, 4096 + dim + 64, seqlen, device=device, dtype=itype)[
+            :, 4096 : 4096 + dim, :
+        ].requires_grad_()
     else:
         x = rearrange(
-            torch.randn(batch_size, seqlen, 4096 + dim + 64, device=device, dtype=itype)[:, :, 4096:4096 + dim], "b s d -> b d s"
+            torch.randn(batch_size, seqlen, 4096 + dim + 64, device=device, dtype=itype)[:, :, 4096 : 4096 + dim],
+            "b s d -> b d s",
         ).requires_grad_()
     weight = torch.randn(dim, width, device=device, dtype=torch.float32, requires_grad=True)
     if has_bias:

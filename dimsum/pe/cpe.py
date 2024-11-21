@@ -1,8 +1,9 @@
-import torch
 import torch.nn as nn
+
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
 
 class PosCNN(nn.Module):
     def __init__(self, in_chans, embed_dim=768, s=1):
@@ -22,9 +23,9 @@ class PosCNN(nn.Module):
         return x
 
     def no_weight_decay(self):
-        return ['proj.%d.weight' % i for i in range(4)]
-    
-    
+        return ["proj.%d.weight" % i for i in range(4)]
+
+
 class AdaInPosCNN(nn.Module):
     def __init__(self, in_chans, embed_dim=768, s=1):
         super(AdaInPosCNN, self).__init__()
@@ -47,4 +48,4 @@ class AdaInPosCNN(nn.Module):
         return x
 
     def no_weight_decay(self):
-        return ['proj.%d.weight' % i for i in range(4)]
+        return ["proj.%d.weight" % i for i in range(4)]

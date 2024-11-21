@@ -7,11 +7,10 @@ import torchvision.transforms as transforms
 import typer
 from natsort import natsorted
 from PIL import Image, ImageFile
+from tqdm import tqdm
 
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-from tqdm import tqdm
 
 
 class CenterCropLongEdge(object):
@@ -36,9 +35,7 @@ def resize_and_center_crop(image_np, resize_size):
     image_pil = center_crop_trsf(image_pil)
 
     if resize_size is not None:
-        image_pil = image_pil.resize(
-            (resize_size, resize_size), Image.Resampling.LANCZOS
-        )
+        image_pil = image_pil.resize((resize_size, resize_size), Image.Resampling.LANCZOS)
     return image_pil
 
 
@@ -49,12 +46,12 @@ def process_image(file_path, input_dir, output_dir, resize_size, suffix):
     output_path.parent.mkdir(exist_ok=True, parents=True)
     image_np = np.array(Image.open(file_path.as_posix()))
     if image_np.shape[-1] == 1:
-        image_np = np.tile(image_np, (1,1,3))
+        image_np = np.tile(image_np, (1, 1, 3))
     processed_image = resize_and_center_crop(image_np, resize_size)
-    
+
     if processed_image.mode in ("RGBA", "P"):
-        processed_image = processed_image.convert('RGB')
-        
+        processed_image = processed_image.convert("RGB")
+
     processed_image.save(output_path.as_posix())
 
 

@@ -1,40 +1,30 @@
-import logging
-import math
-from collections import OrderedDict
-from functools import partial
-from typing import Any, Callable, Dict, Optional, Set, Tuple, Type, Union, List
-try:
-    from typing import Literal
-except ImportError:
-    from typing_extensions import Literal
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
+from timm.layers import use_fused_attn
 from torch.jit import Final
 
-from timm.layers import use_fused_attn
 
 class CrossAttentionFusion(nn.Module):
     fused_attn: Final[bool]
 
     def __init__(
-            self,
-            dim: int,
-            num_heads: int = 8,
-            qkv_bias: bool = False,
-            qk_norm: bool = False,
-            attn_drop: float = 0.,
-            proj_drop: float = 0.,
-            norm_layer: nn.Module = nn.LayerNorm,
-            swap_k=False,
+        self,
+        dim: int,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        qk_norm: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        norm_layer: nn.Module = nn.LayerNorm,
+        swap_k=False,
     ) -> None:
         super().__init__()
-        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        assert dim % num_heads == 0, "dim should be divisible by num_heads"
         self.num_heads = num_heads
         self.head_dim = dim // 2 // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.fused_attn = use_fused_attn()
         self.swap_k = swap_k
 
@@ -50,12 +40,14 @@ class CrossAttentionFusion(nn.Module):
 
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-    
+
     def _compute_attention(self, q, k, v):
         if self.fused_attn:
             x = F.scaled_dot_product_attention(
-                q, k, v,
-                dropout_p=self.attn_drop.p if self.training else 0.,
+                q,
+                k,
+                v,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
             )
         else:
             q = q * self.scale
@@ -63,7 +55,7 @@ class CrossAttentionFusion(nn.Module):
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
             x = attn @ v
-        
+
         return x
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:

@@ -11,34 +11,51 @@
 equilibrium". Matches the original implementation by Heusel et al. at
 https://github.com/bioinf-jku/TTUR/blob/master/fid.py"""
 
-import numpy as np
-import scipy.linalg
-from . import metric_utils
 import copy
 
-#----------------------------------------------------------------------------
+import numpy as np
+import scipy.linalg
+
+from . import metric_utils
+
+
+# ----------------------------------------------------------------------------
+
 
 def compute_fid(opts, max_real, num_gen):
     # Direct TorchScript translation of http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz
-    detector_url = 'https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/inception-2015-12-05.pt'
-    detector_kwargs = dict(return_features=True) # Return raw features before the softmax layer.
+    detector_url = "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/inception-2015-12-05.pt"
+    detector_kwargs = dict(return_features=True)  # Return raw features before the softmax layer.
 
     mu_real, sigma_real = metric_utils.compute_feature_stats_for_dataset(
-        opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
-        rel_lo=0, rel_hi=0, capture_mean_cov=True, max_items=max_real).get_mean_cov()
+        opts=opts,
+        detector_url=detector_url,
+        detector_kwargs=detector_kwargs,
+        rel_lo=0,
+        rel_hi=0,
+        capture_mean_cov=True,
+        max_items=max_real,
+    ).get_mean_cov()
 
     gen_opts = copy.deepcopy(opts)
     gen_opts.dataset_kwargs = opts.gen_dataset_kwargs
     mu_gen, sigma_gen = metric_utils.compute_feature_stats_for_dataset(
-        opts=gen_opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
-        rel_lo=0, rel_hi=1, capture_mean_cov=True, max_items=num_gen).get_mean_cov()
+        opts=gen_opts,
+        detector_url=detector_url,
+        detector_kwargs=detector_kwargs,
+        rel_lo=0,
+        rel_hi=1,
+        capture_mean_cov=True,
+        max_items=num_gen,
+    ).get_mean_cov()
 
     if opts.rank != 0:
-        return float('nan')
+        return float("nan")
 
     m = np.square(mu_gen - mu_real).sum()
-    s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False) # pylint: disable=no-member
+    s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False)  # pylint: disable=no-member
     fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
     return float(fid)
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------

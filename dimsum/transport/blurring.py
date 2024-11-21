@@ -1,23 +1,33 @@
 """Taken from https://github.com/zh217/torch-dct/blob/master/torch_dct/_dct.py
 Some modifications have been made to work with newer versions of Pytorch"""
 
-import torch
 import numpy as np
-import scipy.stats as st
+import torch
+
 
 def rearrange(image, patch_size):
     """
     rearrange [B x C x hs x ws] images into [Bhw x C x s x s] patches
     """
     B, C, H, W = image.shape
-    return image.reshape(B, C, H // patch_size, patch_size, W // patch_size, patch_size).permute(0, 2, 4, 1, 3, 5).reshape(-1, C, patch_size, patch_size)
+    return (
+        image.reshape(B, C, H // patch_size, patch_size, W // patch_size, patch_size)
+        .permute(0, 2, 4, 1, 3, 5)
+        .reshape(-1, C, patch_size, patch_size)
+    )
+
 
 def reverse_rearrange(image, image_size):
     """
     recover from [Bhw x C x s x s] patches to [B x C x hs x ws] images
     """
     _, C, _, patch_size = image.shape
-    return image.reshape(-1, image_size // patch_size, image_size // patch_size, C, patch_size, patch_size).permute(0, 3, 1, 4, 2, 5).reshape(-1, C, image_size, image_size)
+    return (
+        image.reshape(-1, image_size // patch_size, image_size // patch_size, C, patch_size, patch_size)
+        .permute(0, 3, 1, 4, 2, 5)
+        .reshape(-1, C, image_size, image_size)
+    )
+
 
 def dct(x, norm=None):
     """
@@ -34,17 +44,16 @@ def dct(x, norm=None):
 
     v = torch.cat([x[:, ::2], x[:, 1::2].flip([1])], dim=1)
 
-    #Vc = torch.fft.rfft(v, 1)
+    # Vc = torch.fft.rfft(v, 1)
     Vc = torch.view_as_real(torch.fft.fft(v, dim=1))
 
-    k = - torch.arange(N, dtype=x.dtype,
-                       device=x.device)[None, :] * np.pi / (2 * N)
+    k = -torch.arange(N, dtype=x.dtype, device=x.device)[None, :] * np.pi / (2 * N)
     W_r = torch.cos(k)
     W_i = torch.sin(k)
 
     V = Vc[:, :, 0] * W_r - Vc[:, :, 1] * W_i
 
-    if norm == 'ortho':
+    if norm == "ortho":
         V[:, 0] /= np.sqrt(N) * 2
         V[:, 1:] /= np.sqrt(N / 2) * 2
 
@@ -68,12 +77,11 @@ def idct(X, norm=None):
 
     X_v = X.contiguous().view(-1, x_shape[-1]) / 2
 
-    if norm == 'ortho':
+    if norm == "ortho":
         X_v[:, 0] *= np.sqrt(N) * 2
         X_v[:, 1:] *= np.sqrt(N / 2) * 2
 
-    k = torch.arange(x_shape[-1], dtype=X.dtype,
-                     device=X.device)[None, :] * np.pi / (2 * N)
+    k = torch.arange(x_shape[-1], dtype=X.dtype, device=X.device)[None, :] * np.pi / (2 * N)
     W_r = torch.cos(k)
     W_i = torch.sin(k)
 
@@ -84,12 +92,12 @@ def idct(X, norm=None):
     V_i = V_t_r * W_i + V_t_i * W_r
 
     V = torch.cat([V_r.unsqueeze(2), V_i.unsqueeze(2)], dim=2)
-   
-    #v = torch.fft.irfft(V, 1)
+
+    # v = torch.fft.irfft(V, 1)
     v = torch.fft.irfft(torch.view_as_complex(V), n=V.shape[1], dim=1)
     x = v.new_zeros(v.shape)
-    x[:, ::2] += v[:, :N - (N // 2)]
-    x[:, 1::2] += v.flip([1])[:, :N // 2]
+    x[:, ::2] += v[:, : N - (N // 2)]
+    x[:, 1::2] += v.flip([1])[:, : N // 2]
 
     return x.view(*x_shape)
 
@@ -106,15 +114,16 @@ def dct_2d(x, size, norm=None, keeps_size=True):
     origin_size = x.shape[-1]
     if origin_size > size:
         x = rearrange(x, size)
-        
+
     X1 = dct(x, norm=norm)
     X2 = dct(X1.transpose(-1, -2), norm=norm)
     X2 = X2.transpose(-1, -2)
-    
+
     if keeps_size and origin_size > size:
         X2 = reverse_rearrange(X2, origin_size)
-    
+
     return X2
+
 
 def idct_2d(X, size, norm=None):
     """
@@ -147,12 +156,12 @@ def block_noise(ref_x, randn_like=torch.randn_like, block_size=1, device=None):
     g_noise = randn_like(ref_x)
     if block_size == 1:
         return g_noise
-    
+
     blk_noise = torch.zeros_like(ref_x, device=device)
     for px in range(block_size):
         for py in range(block_size):
             blk_noise += torch.roll(g_noise, shifts=(px, py), dims=(-2, -1))
-            
-    blk_noise = blk_noise / block_size # to maintain the same std on each pixel
-    
+
+    blk_noise = blk_noise / block_size  # to maintain the same std on each pixel
+
     return blk_noise
