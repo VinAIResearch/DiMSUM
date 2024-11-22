@@ -29,7 +29,7 @@ Spatial-Frequency Method for Image Generation" <a href=""> (NeurIPS'24)</a></h1>
   <sup>4</sup>New York University
   <br> <br>
   <a href="https://hao-pt.github.io/dimsum/">[Page]</a> &emsp;&emsp;
-  <a href="">[Paper]</a> &emsp;&emsp;
+  <a href="https://arxiv.org/abs/2411.04168">[Paper]</a> &emsp;&emsp;
   <br> <br>
   <emp><sup>*</sup>Equal contribution</emp> &emsp;
   <emp><sup>&dagger;</sup>Work done while at VinAI Research</emp>
