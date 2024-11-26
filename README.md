@@ -48,7 +48,7 @@ Details of the model architecture and experimental results can be found in our f
 ```bibtex
 @inproceedings{phung2024dimsum,
    title={DiMSUM: Diffusion Mamba - A Scalable and Unified Spatial-Frequency Method for Image Generation},
-   author={Hao Phung, Quan Dao, Trung Dao, Hoang Phan, Dimitris Metaxas, Anh Tran},
+   author={Hao Phung and Quan Dao and Trung Dao and Hoang Phan and Dimitris Metaxas and Anh Tran},
    booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
    year= {2024},
 }
