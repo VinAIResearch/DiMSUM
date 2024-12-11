@@ -11,7 +11,7 @@
 
 <div align="center">
 <h1>Official PyTorch implementation of "DiMSUM: Diffusion Mamba - A Scalable and Unified
-Spatial-Frequency Method for Image Generation" <a href=""> (NeurIPS'24)</a></h1>
+Spatial-Frequency Method for Image Generation" <a href="https://arxiv.org/abs/2411.04168"> (NeurIPS'24)</a></h1>
 </div>
 
 <div align="center">
