@@ -161,4 +161,4 @@ bash scripts/eval.sh
 This project is based on [Vim](https://github.com/hustvl/Vim.git), [LFM](https://github.com/VinAIResearch/LFM.git), [SiT](https://github.com/willisma/SiT.git), [DiT](https://github.com/facebookresearch/DiT.git), [ZigMa](https://github.com/CompVis/zigma.git). Thanks for publishing their wonderful works with codes.
 
 ## Contacts
-If you have any problems, please open an issue in this repository or ping an email to tienhaophung@gmail.com.
+If you have any problems, please open an issue in this repository or ping an email to tienhaophung@gmail.com and kevinquandao10@gmail.com.
