@@ -1,4 +1,5 @@
 from .transport import ModelType, PathType, Transport, WeightType
+from .transport import Sampler
 
 
 def create_transport(
