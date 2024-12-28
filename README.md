@@ -28,7 +28,7 @@ Spatial-Frequency Method for Image Generation" <a href="https://arxiv.org/abs/24
   <sup>3</sup>Cornell University &emsp;
   <sup>4</sup>New York University
   <br> <br>
-  <a href="https://hao-pt.github.io/dimsum/">[Page]</a> &emsp;&emsp;
+  <a href="https://vinairesearch.github.io/DiMSUM/">[Page]</a> &emsp;&emsp;
   <a href="https://arxiv.org/abs/2411.04168">[Paper]</a> &emsp;&emsp;
   <br> <br>
   <emp><sup>*</sup>Equal contribution</emp> &emsp;
