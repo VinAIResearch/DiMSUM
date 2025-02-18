@@ -86,6 +86,14 @@ Details of the model architecture and experimental results can be found in our f
 ### Training
 For CelebA HQ (256) and LSUN, please follow [this repo](https://github.com/NVlabs/NVAE.git) for dataset preparation.
 
+### Fast preprocessing for latent imagenet: 
+
+We divide imagenet into many subsets and parallel preprocess each subsets with different gpus to speed up preprocessing stage (within 2 hours).
+
+```bash
+python preprocess_latent_imagenet_dat.py --data-path <path-to-your-imagenet> --features-path <save-path-for-latent-imagenet> --total-batch <number-of-imagenet-partition> --batch-idx <index-of-partition>
+```
+
 ### Evaluation
 For evaluation, please resize and extract "jpeg" images from dataset first.
 
