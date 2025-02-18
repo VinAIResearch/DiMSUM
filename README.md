@@ -30,6 +30,8 @@ Spatial-Frequency Method for Image Generation" <a href="https://arxiv.org/abs/24
   <br> <br>
   <a href="https://vinairesearch.github.io/DiMSUM/">[Page]</a> &emsp;&emsp;
   <a href="https://arxiv.org/abs/2411.04168">[Paper]</a> &emsp;&emsp;
+  <a href="https://huggingface.co/haopt/dimsum-L2-imagenet256">[HuggingFace <img src="https://huggingface.co/front/assets/huggingface_logo.svg" width=20>]</a> &emsp;&emsp;
+  
   <br> <br>
   <emp><sup>*</sup>Equal contribution</emp> &emsp;
   <emp><sup>&dagger;</sup>Work done while at VinAI Research</emp>
@@ -56,6 +58,9 @@ Details of the model architecture and experimental results can be found in our f
 
 **Please CITE** our paper and give us a :star: whenever this repository is used to help produce published results or incorporated into other software.
 
+**News**
+
+- [Feb 17th, 2025] Upload ImageNet-1K model onto [HuggingFace <img src="https://huggingface.co/front/assets/huggingface_logo.svg" width=20>](https://huggingface.co/haopt/dimsum-L2-imagenet256) for easy access.
 
 ## Installation
 
@@ -95,7 +100,9 @@ python eval_toolbox/resize.py main input_data_dir real_samples/dataname
 ```
 
 ## Pretrained Weights
-<!-- We provide pretrained checkpoints of CelebA 256 & LSUN Church for quick testing at [here](https://drive.google.com/drive/folders/1SAE3uSrXv1FNoC92KhFefy24ZSkxjRY5?usp=sharing). -->
+Currently, there is a Hugging Face model for ImageNet-1K available at [`haopt/dimsum-L2-imagenet256`](https://huggingface.co/haopt/dimsum-L2-imagenet256). To use, simply set `--ckpt haopt/dimsum-L2-imagenet256` in sampling bash scripts of [Evaluation](#evaluation). 
+
+Or manually download all models with provided links below:
 
 <table>
   <tr>

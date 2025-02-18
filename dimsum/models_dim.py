@@ -2,6 +2,9 @@ import math
 from functools import partial
 from typing import Optional
 
+from huggingface_hub import PyTorchModelHubMixin
+
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -1551,14 +1554,14 @@ class DiTBlock(nn.Module):
         return x
 
 
-class DiM(nn.Module):
+class DiM(nn.Module,PyTorchModelHubMixin):
     def __init__(
         self,
         img_resolution=32,
         patch_size=2,
         in_channels=4,
-        hidden_size=1152,
-        depth=28,
+        hidden_size=1024,
+        depth=16,
         label_dropout=0.1,
         num_classes=1000,
         learn_sigma=False,

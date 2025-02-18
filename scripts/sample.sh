@@ -40,10 +40,11 @@
 #     # --compute-nfe \
 #     # --measure-time \
 
+# imnet256_510ep.pt
 python dimsum/sample.py ODE \
     --model DiM-L/2 \
     --image-size 256 \
-    --ckpt imnet256_510ep.pt \
+    --ckpt haopt/dimsum-L2-imagenet256 \
     --global-batch-size 64 \
     --path-type GVP \
     --num-classes 1001 \

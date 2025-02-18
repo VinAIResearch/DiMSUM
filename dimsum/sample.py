@@ -17,6 +17,8 @@ import sys
 from time import time
 
 import numpy as np
+import torchvision
+
 from create_model import create_model
 from diffusers.models import AutoencoderKL
 from download import find_model
@@ -56,8 +58,8 @@ def main(mode, args):
     # Load model:
     latent_size = args.image_size // 8
     model = create_model(args).to(device)
+    ckpt_path = args.ckpt
     # Auto-download a pre-trained model or load a custom SiT checkpoint from train.py:
-    ckpt_path = args.ckpt  # or f"SiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
     model.load_state_dict(state_dict)
     model.eval()  # important!
@@ -183,19 +185,11 @@ def main(mode, args):
     samples = vae.decode(samples / 0.18215).sample
     print(f"Sampling took {time() - start_time:.2f} seconds.")
 
-    sample_folder_dir = "/share/kuleshov/htp26/dimsum/cherry_samples"
-    os.makedirs(sample_folder_dir, exist_ok=True)
-
-    samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
-    for i, sample in enumerate(samples):
-        index = i
-        Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
-
-    # # Save and display images:
-    # if use_cfg:
-    #     save_image(samples, f"sit_{class_labels[0]}_sample_cfg{args.cfg_scale}.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
-    # else:
-    #     save_image(samples, "sit_sample.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
+    # Save and display images:
+    if use_cfg:
+        torchvision.utils.save_image(samples, f"sit_{class_labels[0]}_sample_cfg{args.cfg_scale}.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
+    else:
+        torchvision.utils.save_image(samples, "sit_sample.png", nrow=8, normalize=True, value_range=(-1, 1), pad_value=1.)
 
 
 def none_or_str(value):
